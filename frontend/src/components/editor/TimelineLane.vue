@@ -78,8 +78,8 @@ function bufferFor(clip: Clip): AudioBuffer | null {
 <template>
   <div class="flex flex-1 min-h-[80px] border-b border-border/40 group hover:bg-white/[0.02] transition-colors">
     <div 
-      class="w-56 min-w-0 shrink-0 flex flex-col justify-center gap-1.5 overflow-hidden border-r p-1.5 backdrop-blur-sm transition-colors cursor-pointer track-header relative"
-      :class="selected ? 'bg-panel-2/60' : 'border-border/40 bg-panel-2/30 group-hover:bg-panel-2/50'"
+      class="w-56 min-w-0 shrink-0 flex flex-col justify-center gap-1.5 overflow-hidden border-r p-1.5 transition-colors cursor-pointer track-header sticky left-0 z-10 bg-panel-2"
+      :class="selected ? '' : 'border-border/40'"
       @click="emit('selectLane')"
       @focusin="onHeaderFocus"
     >
@@ -129,7 +129,7 @@ function bufferFor(clip: Clip): AudioBuffer | null {
     </div>
 
     <div
-      class="relative flex-1 overflow-hidden transition-colors ml-3"
+      class="relative isolate flex-1 overflow-hidden transition-colors ml-3"
       :class="isDragOver ? 'bg-accent1/10 ring-2 ring-inset ring-accent1' : ''"
       :style="{ minWidth: widthPx + 'px' }"
       @dragover.prevent="isDragOver = true"

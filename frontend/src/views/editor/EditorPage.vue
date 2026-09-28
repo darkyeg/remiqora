@@ -57,13 +57,16 @@ function tick(): void {
   const ctx = getSharedAudioCtx()
   const currentTime = ctx.currentTime - playStartCtxTime + playStartOffset
   
+  const prevSec = store.playheadSec
   if (store.project.loopRegion?.enabled && currentTime >= store.project.loopRegion.end) {
     seek(store.project.loopRegion.start)
+    followPlayhead(prevSec)
     rafId = requestAnimationFrame(tick)
     return
   }
 
   store.playheadSec = Math.min(store.totalDuration, currentTime)
+  followPlayhead(prevSec)
   laneLevels.value = store.project.lanes.map((_, i) => engine.getLaneLevel(i))
   masterLevel.value = engine.getMasterLevel()
   rafId = requestAnimationFrame(tick)
@@ -194,6 +197,21 @@ function revealPlayhead(): void {
   if (x < viewStart + 16 || x > viewEnd - 16) {
     el.scrollLeft = Math.max(0, x - TIMELINE_ORIGIN_PX - (el.clientWidth - TIMELINE_ORIGIN_PX) / 3)
   }
+}
+
+/** During playback: when the playhead leaves the view, turn the page so it
+ * is back near the left edge. Only if it was on screen a frame ago, so
+ * scrolling away to look at another part of the song is not undone. Paging
+ * (rather than scrolling every frame) keeps repaints to one per screen. */
+function followPlayhead(prevSec: number): void {
+  const el = timelineScrollEl.value
+  if (!el) return
+  const pps = store.project.pxPerSecond
+  const viewStart = el.scrollLeft
+  const viewEnd = el.scrollLeft + el.clientWidth - TIMELINE_ORIGIN_PX
+  const inView = (x: number) => x >= viewStart && x <= viewEnd
+  const x = store.playheadSec * pps
+  if (inView(prevSec * pps) && !inView(x)) el.scrollLeft = Math.max(0, x - 24)
 }
 
 /** Zooms by `factor` keeping the playhead at the same place on screen. */
@@ -432,6 +450,14 @@ watch(
 )
 
 function onKeydown(e: KeyboardEvent) {
+  // Ctrl+S saves the project (also from the name field) instead of opening
+  // the browser's Save Page dialog.
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyS') {
+    e.preventDefault()
+    if (!store.saving) void doSave()
+    return
+  }
+
   const tag = (e.target as HTMLElement)?.tagName?.toUpperCase()
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 

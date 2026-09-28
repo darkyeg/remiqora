@@ -542,6 +542,7 @@ export default {
       redo: 'Redo action',
       movePlayhead: 'Move playhead (Shift: by a bar)',
       startEnd: 'Jump to start / end',
+      save: 'Save project',
       selectByKeyboard: 'Select the next clip or track',
       moveClip: 'Move the selected clip (Alt: fine)',
       trimClipEnd: 'Shorten or lengthen the selected clip',
