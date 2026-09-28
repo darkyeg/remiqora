@@ -57,6 +57,14 @@ import { useEditorStore } from '../../stores/editor'
 
 const store = useEditorStore()
 
+// Keyboard focus anywhere in the header selects the track, which is what
+// brings up its channel strip. Mouse clicks on M/S/x keep not selecting it.
+function onHeaderFocus(e: FocusEvent): void {
+  const el = e.target as HTMLElement
+  const isTextInput = el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'text'
+  if (isTextInput || el.matches(':focus-visible')) emit('selectLane')
+}
+
 function bufferFor(clip: Clip): AudioBuffer | null {
   if (!clip.sourceUrl) return null
   if (clip.warpEnabled && clip.originalBpm) {
@@ -73,6 +81,7 @@ function bufferFor(clip: Clip): AudioBuffer | null {
       class="w-56 min-w-0 shrink-0 flex flex-col justify-center gap-1.5 overflow-hidden border-r p-1.5 backdrop-blur-sm transition-colors cursor-pointer track-header relative"
       :class="selected ? 'bg-panel-2/60' : 'border-border/40 bg-panel-2/30 group-hover:bg-panel-2/50'"
       @click="emit('selectLane')"
+      @focusin="onHeaderFocus"
     >
       <div v-if="selected" class="absolute left-0 top-0 bottom-0 w-1 shadow-lg" :style="{ backgroundColor: theme.baseHex, boxShadow: `0 0 10px ${theme.baseHex}` }"></div>
       
