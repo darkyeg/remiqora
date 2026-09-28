@@ -176,7 +176,7 @@ function makeSoftClipCurve(threshold = 0.9): Float32Array {
   const size = 8192
   const curve = new Float32Array(size)
   for (let i = 0; i < size; i++) {
-    const x = (i * 2) / size - 1
+    const x = (i * 2) / (size - 1) - 1
     const abs = Math.abs(x)
     let y = abs
     if (abs > threshold) {
@@ -196,7 +196,7 @@ function makeBitcrusherCurve(bits: number): Float32Array {
   const size = 8192
   const curve = new Float32Array(size)
   for (let i = 0; i < size; i++) {
-    const x = (i * 2) / size - 1
+    const x = (i * 2) / (size - 1) - 1
     curve[i] = Math.round(x * steps) / steps
   }
   return curve
@@ -632,6 +632,7 @@ export function disconnectMixGraph(graph: MixGraph): void {
 }
 
 const impulseCache = new Map<number, AudioBuffer>()
+const REVERB_IMPULSE_SEC = 2
 
 /** A procedurally generated ~2s decaying-noise impulse response, cached per
  * sample rate. Unlike AudioBufferSourceNode, ConvolverNode.buffer does NOT
@@ -641,10 +642,25 @@ const impulseCache = new Map<number, AudioBuffer>()
 export function getReverbImpulse(sampleRate: number): AudioBuffer {
   let buf = impulseCache.get(sampleRate)
   if (!buf) {
-    buf = generateImpulse(sampleRate, 2, 2)
+    buf = generateImpulse(sampleRate, REVERB_IMPULSE_SEC, 2)
     impulseCache.set(sampleRate, buf)
   }
   return buf
+}
+
+/** How long a channel keeps sounding after its input goes silent: the
+ * reverb impulse, plus delay repeats until the feedback has decayed them
+ * below -60 dB. Used to size offline renders so they keep the ring-out. */
+export function effectTailSeconds(s: ChannelSettings | MasterSettings): number {
+  let tail = 0
+  if (s.reverb.mix > 0) tail += REVERB_IMPULSE_SEC
+  const d = s.delay
+  if (d?.enabled && (d.mix ?? 0) > 0) {
+    const fb = Math.min(Math.max(d.feedback ?? 0.4, 0), 0.99)
+    const repeats = fb > 0 ? Math.ceil(Math.log(0.001) / Math.log(fb)) : 1
+    tail += (d.time ?? 0.3) * Math.max(1, repeats)
+  }
+  return tail
 }
 
 function generateImpulse(sampleRate: number, durationSec: number, decay: number): AudioBuffer {

@@ -5,7 +5,7 @@
  * own buildMixGraph/STEM_NAMES stay fixed at exactly 4 stems and are
  * untouched; this module is the arbitrary-lane-count counterpart.
  */
-import { applyChannelSettings, buildChannel, getReverbImpulse } from './mixerEngine'
+import { applyChannelSettings, buildChannel, effectTailSeconds, getReverbImpulse } from './mixerEngine'
 import type { BuiltChannel, ChannelSettings, MasterSettings } from './mixerEngine'
 
 export interface TimelineGraph {
@@ -247,6 +247,50 @@ export function scheduleTimeline(
   }
 }
 
+// Export renders past the last clip so reverb and delay can ring out, then
+// cuts the file where the tail drops below -80 dBFS. A long feedback delay
+// can outlast the cap; that tail is faded out instead of stopping hard.
+const MAX_EXPORT_TAIL_SEC = 30
+const TAIL_SILENCE = 1e-4
+const TAIL_FADE_SEC = 0.05
+
+export function exportTailSeconds(laneSettings: ChannelSettings[], masterSettings: MasterSettings): number {
+  const anySolo = laneSettings.some((s) => s.solo)
+  const audible = laneSettings.filter((s) => effectiveLaneGain(s, anySolo) > 0)
+  const laneTail = Math.max(0, ...audible.map(effectTailSeconds))
+  return Math.min(MAX_EXPORT_TAIL_SEC, laneTail + effectTailSeconds(masterSettings))
+}
+
+/** One past the last sample above `threshold` in any channel, or 0. */
+export function audibleLength(channels: Float32Array[], threshold: number): number {
+  let end = 0
+  for (const data of channels) {
+    for (let i = data.length - 1; i >= end; i--) {
+      if (Math.abs(data[i]) > threshold) {
+        end = i + 1
+        break
+      }
+    }
+  }
+  return end
+}
+
+function trimTail(buf: AudioBuffer, contentFrames: number): AudioBuffer {
+  if (buf.length <= contentFrames) return buf
+  const channels = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c))
+  const end = Math.max(contentFrames, audibleLength(channels, TAIL_SILENCE))
+  if (end === buf.length) {
+    const fade = Math.min(Math.round(TAIL_FADE_SEC * buf.sampleRate), buf.length - contentFrames)
+    for (const data of channels) {
+      for (let i = 0; i < fade; i++) data[buf.length - fade + i] *= 1 - (i + 1) / fade
+    }
+    return buf
+  }
+  const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: end, sampleRate: buf.sampleRate })
+  channels.forEach((data, c) => out.copyToChannel(data.subarray(0, end), c))
+  return out
+}
+
 export async function renderTimeline(
   clips: ScheduledClip[],
   laneSettings: ChannelSettings[],
@@ -254,7 +298,9 @@ export async function renderTimeline(
   totalDurationSec: number,
   sampleRate: number,
 ): Promise<AudioBuffer> {
-  const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(totalDurationSec * sampleRate)), sampleRate)
+  const contentFrames = Math.max(1, Math.ceil(totalDurationSec * sampleRate))
+  const tailFrames = Math.ceil(exportTailSeconds(laneSettings, masterSettings) * sampleRate)
+  const ctx = new OfflineAudioContext(2, contentFrames + tailFrames, sampleRate)
   const graph = buildTimelineGraph(ctx, laneSettings.length, getReverbImpulse(sampleRate))
   const anySolo = laneSettings.some((s) => s.solo)
   laneSettings.forEach((s, i) => applyLaneSettings(graph, i, s, effectiveLaneGain(s, anySolo)))
@@ -327,5 +373,5 @@ export async function renderTimeline(
     fadeGain.connect(graph.lanes[clip.laneIndex].input)
     src.start(absStart, stretchedTrimStart, duration)
   }
-  return ctx.startRendering()
+  return trimTail(await ctx.startRendering(), contentFrames)
 }
