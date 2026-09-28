@@ -37,7 +37,9 @@ const emit = defineEmits<{
   toggleSolo: [enabled: boolean]
 }>()
 
+import { useI18n } from 'vue-i18n'
 import { useEditorStore } from '../../stores/editor'
+const { t } = useI18n()
 const store = useEditorStore()
 
 const effectiveStretchFactor = computed(() => {
@@ -97,6 +99,30 @@ function snap(value: number): number {
   }
   
   return best
+}
+
+/** Arrow keys on the focused clip: move it (grid step with Magnet on, else
+ * 0.1 s; Alt for 0.01 s), or with Shift move its end. Each press is one undo step. */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.target !== e.currentTarget) return
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  if (e.ctrlKey || e.metaKey) return
+  e.preventDefault()
+  e.stopPropagation()
+  const dir = e.key === 'ArrowLeft' ? -1 : 1
+  const grid = props.snapEnabled && props.gridStepSec > 0 && !e.altKey
+  const step = e.altKey ? 0.01 : grid ? props.gridStepSec : 0.1
+  if (e.shiftKey) {
+    const sf = effectiveStretchFactor.value
+    const maxEnd = props.buffer ? props.buffer.duration / sf : Infinity
+    const trimEnd = Math.max(props.clip.trimStart + MIN_CLIP_SEC, Math.min(props.clip.trimEnd + (dir * step) / sf, maxEnd))
+    emit('trim', { trimStart: props.clip.trimStart, trimEnd, timelineStart: props.clip.timelineStart })
+  } else {
+    let start = props.clip.timelineStart + dir * step
+    if (grid) start = Math.round(start / props.gridStepSec) * props.gridStepSec
+    emit('move', Math.max(0, start))
+  }
+  emit('dragEnd')
 }
 
 function onPointerDown(mode: DragMode, evt: PointerEvent): void {
@@ -355,7 +381,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="absolute top-2 h-16 overflow-hidden rounded-lg border select-none transition-all duration-200"
+    class="absolute top-2 h-16 overflow-hidden rounded-lg border select-none transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+    tabindex="0"
+    :aria-label="t('timeline.clipLabel', { name: laneName, start: clip.timelineStart.toFixed(2), length: duration.toFixed(2) })"
+    @focus="emit('select')"
+    @keydown="onKeydown"
     :class="selected ? 'bg-gradient-to-b from-panel to-panel-2 shadow-md' : 'border-border/60 bg-gradient-to-b from-panel-2 to-[#14141a] shadow-sm hover:border-border/90'"
     :style="{ 
       left: left + 'px', 

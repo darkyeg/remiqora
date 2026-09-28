@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useEditorStore } from '../../stores/editor'
@@ -180,6 +180,33 @@ const gridStepSec = computed(() => {
   if (beatPx >= 20) return beatSec     // 1/4 note
   return beatSec * 4                   // 1 bar (4/4 time)
 })
+
+// Track header (w-56) plus the ml-3 gap before time 0 on the ruler and lanes.
+const TIMELINE_ORIGIN_PX = 236
+
+/** Scrolls the timeline so the playhead is on screen, a third of the way in. */
+function revealPlayhead(): void {
+  const el = timelineScrollEl.value
+  if (!el) return
+  const x = TIMELINE_ORIGIN_PX + store.playheadSec * store.project.pxPerSecond
+  const viewStart = el.scrollLeft + TIMELINE_ORIGIN_PX
+  const viewEnd = el.scrollLeft + el.clientWidth
+  if (x < viewStart + 16 || x > viewEnd - 16) {
+    el.scrollLeft = Math.max(0, x - TIMELINE_ORIGIN_PX - (el.clientWidth - TIMELINE_ORIGIN_PX) / 3)
+  }
+}
+
+/** Zooms by `factor` keeping the playhead at the same place on screen. */
+function zoomAroundPlayhead(factor: number): void {
+  const el = timelineScrollEl.value
+  const screenX = store.playheadSec * store.project.pxPerSecond - (el?.scrollLeft ?? 0)
+  store.setZoom(store.project.pxPerSecond * factor)
+  void nextTick(() => {
+    if (!el) return
+    el.scrollLeft = Math.max(0, store.playheadSec * store.project.pxPerSecond - screenX)
+    revealPlayhead()
+  })
+}
 
 function onRulerClick(evt: MouseEvent): void {
   const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect()
@@ -407,6 +434,29 @@ watch(
 function onKeydown(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName?.toUpperCase()
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+  // Playhead and zoom. A focused clip handles its own arrow keys (nudge/trim)
+  // and stops them before they get here.
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      seek(e.key === 'Home' ? 0 : store.totalDuration)
+      revealPlayhead()
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      const step = gridStepSec.value * (e.shiftKey ? 4 : 1)
+      seek(Math.max(0, store.playheadSec + (e.key === 'ArrowLeft' ? -step : step)))
+      revealPlayhead()
+      return
+    }
+    if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') {
+      e.preventDefault()
+      zoomAroundPlayhead(e.key === '-' || e.key === '_' ? 1 / 1.25 : 1.25)
+      return
+    }
+  }
 
   // ────── DAW Hotkeys ──────
   if (e.key === ' ') {

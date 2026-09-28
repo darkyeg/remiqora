@@ -86,6 +86,30 @@ onUnmounted(() => {
                   <span class="text-sm text-text">{{ t('editor.help.redo') }}</span>
                   <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">Ctrl+Y</kbd>
                 </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.movePlayhead') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">← →</kbd>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.startEnd') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">Home / End</kbd>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.zoom') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">+ / -</kbd>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.selectByKeyboard') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">Tab</kbd>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.moveClip') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">← →</kbd>
+                </div>
+                <div class="flex items-center justify-between rounded-lg bg-panel/40 px-4 py-3 border border-border/30">
+                  <span class="text-sm text-text">{{ t('editor.help.trimClipEnd') }}</span>
+                  <kbd class="rounded bg-panel-2 px-2 py-1 text-xs font-mono text-accent1 border border-border/50 shadow-sm">Shift+← →</kbd>
+                </div>
               </div>
             </section>
 
