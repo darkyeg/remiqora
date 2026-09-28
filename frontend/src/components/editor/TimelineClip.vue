@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { stretchFactor } from '../../audio/timelineTypes'
 import type { Clip } from '../../audio/timelineTypes'
 
 const MIN_CLIP_SEC = 0.05
@@ -40,11 +41,7 @@ import { useEditorStore } from '../../stores/editor'
 const store = useEditorStore()
 
 const effectiveStretchFactor = computed(() => {
-  if (props.clip.warpEnabled && props.clip.originalBpm) {
-    const bpm = store.project.bpm || 120
-    return props.clip.originalBpm / bpm
-  }
-  return 1.0
+  return stretchFactor(props.clip, store.project.bpm)
 })
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -138,11 +135,15 @@ function onPointerMove(evt: PointerEvent): void {
     const snappedTimelineStart = snap(rawTimelineStart)
     const appliedStretchedDelta = snappedTimelineStart - dragStartTimelineStart
     const appliedOriginalDelta = appliedStretchedDelta / effectiveStretchFactor.value
-    
+
+    // Snapping can pull the edge earlier than the source start (or later than
+    // maxStart), so clamp again AFTER the snap and derive timelineStart from the
+    // clamped value. A negative trimStart would reach start() as a RangeError.
+    const trimStart = Math.max(0, Math.min(dragStartTrimStart + appliedOriginalDelta, maxStart))
     emit('trim', {
-      trimStart: dragStartTrimStart + appliedOriginalDelta,
+      trimStart,
       trimEnd: dragStartTrimEnd,
-      timelineStart: snappedTimelineStart,
+      timelineStart: dragStartTimelineStart + (trimStart - dragStartTrimStart) * effectiveStretchFactor.value,
     })
   } else if (dragMode === 'trim-right') {
     const minEnd = dragStartTrimStart + MIN_CLIP_SEC
@@ -156,10 +157,12 @@ function onPointerMove(evt: PointerEvent): void {
     
     const appliedStretchedDelta = snappedEndOnTimeline - dragStartTimelineStart
     const appliedOriginalDelta = appliedStretchedDelta / effectiveStretchFactor.value
-    
+
+    // Clamp again after snapping: the snapped end must stay within the source
+    // and at least MIN_CLIP_SEC after trimStart.
     emit('trim', {
       trimStart: dragStartTrimStart,
-      trimEnd: dragStartTrimStart + appliedOriginalDelta,
+      trimEnd: Math.max(minEnd, Math.min(dragStartTrimStart + appliedOriginalDelta, maxEnd)),
       timelineStart: dragStartTimelineStart,
     })
   } else if (dragMode === 'fade-left') {
