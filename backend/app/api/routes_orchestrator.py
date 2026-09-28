@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from ..config import yue2_specs
 from ..orchestrator.manager import manager
+from ..orchestrator.process import StartCancelled
 
 router = APIRouter(prefix="/api/orchestrator", tags=["orchestrator"])
 
@@ -31,6 +32,8 @@ async def switch(req: SwitchRequest):
         await manager.switch_to(req.model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except StartCancelled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (RuntimeError, TimeoutError) as exc:
         # Startup failed; manager.status_snapshot() already reflects the
         # per-model error state/message for the UI to display.

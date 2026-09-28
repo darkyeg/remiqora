@@ -19,6 +19,7 @@ from .orchestrator.manager import manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    manager.start_watchdog()
     yield
     # Don't leave a GPU process running after the dev server is killed.
     await manager.stop_all()

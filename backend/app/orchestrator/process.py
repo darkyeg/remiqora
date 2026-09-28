@@ -22,6 +22,10 @@ from ..config import LOG_DIR, LOG_TAIL_LINES, ProcessSpec
 IS_WINDOWS = sys.platform == "win32"
 
 
+class StartCancelled(Exception):
+    """A model start was abandoned because Stop or shutdown was requested."""
+
+
 def _build_env(spec: ProcessSpec) -> dict[str, str]:
     env = os.environ.copy()
     env.update(spec.env)
@@ -52,6 +56,10 @@ class ManagedProcess:
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def exit_summary(self) -> str:
+        code = self._proc.returncode if self._proc else None
+        return f"process '{self.spec.name}' exited (code {code}).\n{tail_log(self.spec.name)}"
+
     def start(self) -> None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         log_path = LOG_DIR / f"{self.spec.name}.log"
@@ -66,11 +74,13 @@ class ManagedProcess:
             creationflags=creationflags,
         )
 
-    async def wait_healthy(self) -> None:
+    async def wait_healthy(self, cancel: Optional[asyncio.Event] = None) -> None:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self.spec.startup_timeout
         async with httpx.AsyncClient(timeout=3.0) as client:
             while True:
+                if cancel is not None and cancel.is_set():
+                    raise StartCancelled(f"start of '{self.spec.name}' was cancelled")
                 if not self.is_running:
                     code = self._proc.returncode if self._proc else None
                     raise RuntimeError(
@@ -91,7 +101,13 @@ class ManagedProcess:
                         f"process '{self.spec.name}' did not become healthy within "
                         f"{self.spec.startup_timeout:.0f}s.\n{tail_log(self.spec.name)}"
                     )
-                await asyncio.sleep(1.0)
+                if cancel is None:
+                    await asyncio.sleep(1.0)
+                else:
+                    try:
+                        await asyncio.wait_for(cancel.wait(), 1.0)
+                    except asyncio.TimeoutError:
+                        pass
 
     async def wait_stopped(self, timeout: float) -> bool:
         loop = asyncio.get_event_loop()
