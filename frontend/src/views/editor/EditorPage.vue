@@ -7,6 +7,7 @@ import { useTimelineEngine } from '../../composables/useTimelineEngine'
 import { getSharedAudioCtx } from '../../composables/audioPlayback'
 import { decodeStem, defaultMasterSettings, defaultChannelSettings } from '../../audio/mixerEngine'
 import type { ChannelSettings } from '../../audio/mixerEngine'
+import { clipDuration, stretchFactor } from '../../audio/timelineTypes'
 import type { Clip } from '../../audio/timelineTypes'
 import { encodeWav } from '../../audio/wavEncoder'
 import { encodeMp3 } from '../../audio/mp3Encoder'
@@ -190,8 +191,7 @@ const snapCandidates = computed<number[]>(() => {
   const edges = [0]
   for (const lane of store.project.lanes) {
     for (const clip of lane.clips) {
-      const sf = (clip.warpEnabled && clip.originalBpm) ? clip.originalBpm / (store.project.bpm || 120) : 1.0;
-      edges.push(clip.timelineStart, clip.timelineStart + (clip.trimEnd - clip.trimStart) * sf)
+      edges.push(clip.timelineStart, clip.timelineStart + clipDuration(clip, store.project.bpm))
     }
   }
   return edges
@@ -427,8 +427,7 @@ function onKeydown(e: KeyboardEvent) {
       for (const lane of store.project.lanes) {
         const clip = lane.clips.find(c => c.id === store.selectedClipId)
         if (clip) {
-          const sf = (clip.warpEnabled && clip.originalBpm) ? clip.originalBpm / (store.project.bpm || 120) : 1.0;
-          const dur = (clip.trimEnd - clip.trimStart) * sf
+          const dur = clipDuration(clip, store.project.bpm)
           const newClip: Clip = {
             id: crypto.randomUUID(),
             sourceUrl: clip.sourceUrl,
@@ -457,7 +456,7 @@ function onKeydown(e: KeyboardEvent) {
       for (const clip of lane.clips) {
         if (store.selectedClipId && clip.id !== store.selectedClipId) continue
         
-        const sf = (clip.warpEnabled && clip.originalBpm) ? clip.originalBpm / (store.project.bpm || 120) : 1.0;
+        const sf = stretchFactor(clip, store.project.bpm)
         const clipEnd = clip.timelineStart + (clip.trimEnd - clip.trimStart) * sf
         
         // 0.001 margin to prevent splitting exactly at boundaries

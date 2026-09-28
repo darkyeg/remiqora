@@ -42,12 +42,23 @@ export interface TimelineProject {
   loopRegion?: { start: number; end: number; enabled: boolean }
 }
 
-export function clipDuration(clip: Clip, projectBpm: number = 120): number {
-  let sf = 1.0
+/**
+ * Ratio between stretched (timeline) seconds and source seconds for a clip.
+ * A warped clip's stretched buffer has length `source / (projectBpm / originalBpm)`,
+ * so every source-domain value (trimStart, trimEnd, note times) is multiplied by
+ * `originalBpm / projectBpm` to land in the stretched domain. This is the single
+ * place that formula lives; the drawing code, snapping, split/duplicate and the
+ * playback/render engine must all go through it so they cannot disagree.
+ */
+export function stretchFactor(clip: Pick<Clip, 'warpEnabled' | 'originalBpm'>, projectBpm: number = 120): number {
   if (clip.warpEnabled && clip.originalBpm) {
-    sf = clip.originalBpm / projectBpm
+    return clip.originalBpm / (projectBpm || 120)
   }
-  return (clip.trimEnd - clip.trimStart) * sf
+  return 1.0
+}
+
+export function clipDuration(clip: Clip, projectBpm: number = 120): number {
+  return (clip.trimEnd - clip.trimStart) * stretchFactor(clip, projectBpm)
 }
 
 export function clipEnd(clip: Clip, projectBpm: number = 120): number {

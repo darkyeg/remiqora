@@ -20,6 +20,7 @@ import {
   scheduleTimeline,
 } from '../audio/timelineEngine'
 import type { ScheduledClip, TimelineGraph, TimelinePlaybackHandle } from '../audio/timelineEngine'
+import { stretchFactor as clipStretchFactor } from '../audio/timelineTypes'
 import type { TimelineProject } from '../audio/timelineTypes'
 
 export function useTimelineEngine() {
@@ -61,11 +62,9 @@ export function useTimelineEngine() {
         if (clip.muted) continue
         if (anySolo && !clip.solo) continue
 
-        let stretchFactor = 1.0
-        if (clip.warpEnabled && clip.originalBpm) {
-           const bpm = project.bpm || 120
-           stretchFactor = bpm / clip.originalBpm
-        }
+        // Same formula the UI draws with (originalBpm / projectBpm). The engine
+        // multiplies source-domain trim offsets by this to address the stretched buffer.
+        const stretchFactor = clipStretchFactor(clip, project.bpm)
         
         if (clip.type === 'midi') {
           laneClips.push({

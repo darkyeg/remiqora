@@ -176,7 +176,9 @@ export function scheduleTimeline(
 
     if (!clip.buffer) continue
     
-    offset = Math.min(offset, Math.max(0, clip.buffer.duration - 0.001))
+    // A negative offset is a RangeError in AudioBufferSourceNode.start(), which
+    // would abort scheduling half-way and leave already-started sources unstoppable.
+    offset = Math.min(Math.max(0, offset), Math.max(0, clip.buffer.duration - 0.001))
     duration = Math.max(0, Math.min(duration, clip.buffer.duration - offset))
     if (duration <= 0) continue
 
@@ -325,7 +327,12 @@ export async function renderTimeline(
     
     src.connect(fadeGain)
     fadeGain.connect(graph.lanes[clip.laneIndex].input)
-    src.start(absStart, stretchedTrimStart, duration)
+    // Same guards as scheduleTimeline: never hand start() a negative offset or a
+    // duration that runs past the buffer.
+    const offset = Math.min(Math.max(0, stretchedTrimStart), Math.max(0, clip.buffer.duration - 0.001))
+    const playDuration = Math.max(0, Math.min(duration, clip.buffer.duration - offset))
+    if (playDuration <= 0) continue
+    src.start(absStart, offset, playDuration)
   }
   return ctx.startRendering()
 }
