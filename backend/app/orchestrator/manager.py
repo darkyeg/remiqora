@@ -98,6 +98,8 @@ class OrchestratorManager:
             current = self.state.active_model
             if not ALLOW_CONCURRENT_MODELS and current is not None and current != model_id:
                 await self._stop_model(current)
+            if model_id in self._processes:
+                await self._stop_model(model_id)
             await self._start_model(model_id)
 
     async def stop_active(self) -> None:
@@ -105,6 +107,21 @@ class OrchestratorManager:
         async with self._lock:
             if self.state.active_model is not None:
                 await self._stop_model(self.state.active_model)
+
+    async def restart_model(self, model_id: str) -> None:
+        """Release an inference that the native server cannot cancel in place."""
+        if model_id not in MODELS:
+            raise ValueError(f"unknown model '{model_id}'")
+        stop_requests = self._stop_requests
+        async with self._lock:
+            if self._stop_requests != stop_requests:
+                raise StartCancelled(f"restart of '{model_id}' was cancelled")
+            if self.state.active_model not in (None, model_id):
+                raise ValueError(f"cannot restart '{model_id}' while another model is active")
+            await self._stop_model(model_id)
+            if self._stop_requests != stop_requests:
+                raise StartCancelled(f"restart of '{model_id}' was cancelled")
+            await self._start_model(model_id)
 
     async def stop_all(self) -> None:
         self._cancel_pending_starts()
@@ -169,7 +186,12 @@ class OrchestratorManager:
     async def _stop_model(self, model_id: str) -> None:
         rs = self.state.models[model_id]
         rs.status = ModelStatus.STOPPING
-        await self._stop_processes(model_id)
+        try:
+            await self._stop_processes(model_id)
+        except Exception as exc:
+            rs.status = ModelStatus.ERROR
+            rs.error_message = str(exc)
+            raise
         rs.status = ModelStatus.STOPPED
         rs.error_message = None
         if self.state.active_model == model_id:

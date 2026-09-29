@@ -159,6 +159,11 @@ elif IS_LINUX:
 else:
     raise RuntimeError(f"Unsupported platform for YuE2: {sys.platform}")
 
+# Shared local state also supplies the YuE2 progress side channel. The native
+# server writes only a small JSON snapshot here; weights and audio stay put.
+DATA_DIR = _env_path("REMIQORA_DATA_DIR", str(Path(__file__).resolve().parent.parent / "data"))
+YUE2_PROGRESS_PATH = DATA_DIR / "yue2-progress.json"
+
 MODELS: dict[str, ModelDefinition] = {
     "ace_step": ModelDefinition(
         id="ace_step",
@@ -200,17 +205,21 @@ MODELS: dict[str, ModelDefinition] = {
                 name="yue2_server",
                 cwd=YUE2_DIR,
                 cmd=[
-                    str(YUE2_DIR / "build" / _YUE2_BUILD_PRESET / "bin" / _YUE2_SERVER_BIN),
+                    os.environ.get("REMIQORA_YUE2_SERVER_BIN") or str(YUE2_DIR / "build" / _YUE2_BUILD_PRESET / "bin" / _YUE2_SERVER_BIN),
                     "--ui", "--ui-management", "--backend", _YUE2_BACKEND,
+                    # YuE2, SheetSage and MuScriptor share one GPU. Evict idle
+                    # weights before loading a different task's model.
+                    "--max-loaded-models", "1",
                     "--host", YUE2_SERVER_HOST,
                     "--port", str(YUE2_SERVER_PORT),
                     *(["--device", YUE2_DEVICE] if YUE2_DEVICE else []),
                 ],
                 extra_path_dirs=_YUE2_EXTRA_PATH_DIRS,
-                env=(
-                    {"LD_LIBRARY_PATH": f"{CUDA_LIB_DIR}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"}
-                    if IS_LINUX else {}
-                ),
+                env={
+                    "REMIQORA_YUE2_PROGRESS_PATH": str(YUE2_PROGRESS_PATH),
+                    **({"LD_LIBRARY_PATH": f"{CUDA_LIB_DIR}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}"}
+                       if IS_LINUX else {}),
+                },
                 health_url=f"http://127.0.0.1:{YUE2_SERVER_PORT}/health",
                 startup_timeout=300.0,
             ),
@@ -225,7 +234,6 @@ LOG_DIR = _env_path("REMIQORA_LOG_DIR", str(Path(__file__).resolve().parent.pare
 LOG_TAIL_LINES = 40
 
 # Shared track storage: one SQLite DB + files split into a subfolder per model.
-DATA_DIR = _env_path("REMIQORA_DATA_DIR", str(Path(__file__).resolve().parent.parent / "data"))
 
 # Directory containing the built frontend (frontend/dist). Only used when it
 # exists; in dev the Vite dev server is used instead and this is ignored.

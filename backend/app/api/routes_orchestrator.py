@@ -45,3 +45,16 @@ async def switch(req: SwitchRequest):
 async def stop():
     await manager.stop_active()
     return manager.status_snapshot()
+
+
+@router.post("/yue2/reset")
+async def reset_yue2():
+    # YuE2's native task API has no cooperative cancel endpoint. Restarting
+    # its process releases the cancelled inference and its GPU allocations.
+    try:
+        await manager.restart_model("yue2")
+    except (ValueError, StartCancelled) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (RuntimeError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return manager.status_snapshot()

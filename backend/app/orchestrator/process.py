@@ -133,7 +133,8 @@ class ManagedProcess:
         stopped = await self.wait_stopped(self.spec.shutdown_timeout)
         if not stopped:
             await self._force_kill(pid)
-            await self.wait_stopped(10.0)
+            if not await self.wait_stopped(10.0):
+                raise RuntimeError(f"process '{self.spec.name}' did not stop; refusing to start another copy")
         self._close_log()
 
     async def _force_kill(self, pid: int) -> None:

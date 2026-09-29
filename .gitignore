@@ -13,6 +13,7 @@ frontend/dist/
 # External model repos (cloned + patched by setup_models.ps1, not vendored)
 external/ACE-Step-1.5/
 external/audio.cpp/
+external/audio-stream-lab/
 external/Demucs/
 
 # Editor/OS

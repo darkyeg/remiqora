@@ -13,6 +13,7 @@ from .api.routes_proxy import router as proxy_router
 from .api.routes_stems import router as stems_router
 from .api.routes_tracks import router as tracks_router
 from .api.routes_yue2_upload import router as yue2_upload_router
+from .api.routes_yue2_progress import router as yue2_progress_router
 from .config import FRONTEND_DIST_DIR
 from .orchestrator.manager import manager
 
@@ -35,6 +36,7 @@ app.include_router(projects_router)
 app.include_router(lora_dataset_router)
 # Registered before proxy_router's catch-all so this exact path wins.
 app.include_router(yue2_upload_router)
+app.include_router(yue2_progress_router)
 app.include_router(proxy_router)
 
 if FRONTEND_DIST_DIR.exists():
@@ -46,5 +48,5 @@ if FRONTEND_DIST_DIR.exists():
     async def spa_fallback(full_path: str):
         candidate = FRONTEND_DIST_DIR / full_path
         if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST_DIR / "index.html")
+            return FileResponse(candidate, headers={"Cache-Control": "no-store"} if candidate.name == "index.html" else None)
+        return FileResponse(FRONTEND_DIST_DIR / "index.html", headers={"Cache-Control": "no-store"})
