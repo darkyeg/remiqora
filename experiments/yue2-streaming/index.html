@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تجربة بث YuE2</title>
+<style>
+body{font:17px/1.8 system-ui;background:#101117;color:#ececf6;max-width:850px;margin:40px auto;padding:0 20px}h1{font-size:28px}section{background:#1b1d29;border:1px solid #36394d;border-radius:14px;padding:22px;margin:20px 0}label{display:block;margin:12px 0}button,select{font:inherit;color:inherit;background:#292d40;border:1px solid #626681;border-radius:8px;padding:8px 16px}button{cursor:pointer}button:disabled{opacity:.4;cursor:default}#start{background:#643c92}small,.muted{color:#bbc0d5}#status{color:#e0b9ff}audio{width:100%}a{color:#ceb0ff}.controls{display:flex;gap:12px;flex-wrap:wrap}#error{color:#ffaaaa}pre{white-space:pre-wrap;direction:ltr;text-align:left;font-size:13px}
+</style>
+<h1>تجربة بث YuE2 · Q8</h1>
+<p>تجربة محلية مستقلة تستخدم الموديلات الموجودة. اقفل التوليد في البرنامج الأساسي قبل البدء.</p>
+<section>
+<label>الكلمات <select id="sample"><option value="fixture">عينة قصيرة للمقارنة</option><option value="song">أغنيتك اليابانية كاملة</option></select></label>
+<label>طريقة التوليد <select id="profile"><option value="workspace">تجريبي: تحرير مساحة عمل الخطة</option><option value="stream">بث مرحلة إخراج الصوت الأصلية</option><option value="chunks">تجريبي: معالجة مقاطع 20 ثانية</option><option value="baseline">التوليد الأصلي للمقارنة</option></select></label>
+<label>مدة العينة <select id="seconds"><option value="60">دقيقة</option><option value="180">3 دقائق</option></select></label>
+<p class="muted">Q8 وCOT full في كل الأوضاع. العينة القصيرة تستخدم خطة بحد 512 رمزًا وseed 1234. أغنيتك تستخدم حدود الموديل الأصلية وseed 831001، ومدتها يحددها الموديل. تقسيم المعالجة قد يغيّر الغناء والتوزيع.</p>
+<div class="controls"><button id="start">ولّد واسمع الأجزاء فور جاهزيتها</button><button id="stop" disabled>إيقاف</button></div>
+<p id="status" role="status">جاهز للتجربة</p><p id="error" role="alert"></p>
+<p id="stats" class="muted"></p>
+<audio id="final" controls preload="none" hidden></audio>
+</section>
+<section><h2>اسمع المقارنة المسجّلة</h2><p class="muted">نفس العينة لمدة دقيقة. قيّم استمرارية اللحن والصوت، خصوصًا عند الثانية 20 و40 في نسخة المقاطع.</p>
+<label>الأصل <audio controls preload="none" src="/baseline-60s/final.wav"></audio></label>
+<label>البث من مرحلة الإخراج <audio controls preload="none" src="/stream-60s/final.wav"></audio></label>
+<label>المقاطع التجريبية <audio controls preload="none" src="/chunks-60s/final.wav"></audio></label>
+</section>
+<section><h2>أغنيتك اليابانية كاملة</h2><p class="muted">نفس الكلمات والستايل المرسل، Q8 وCOT full، seed 831001، وحدود الموديل الأصلية. الملفات تصبح متاحة عند اكتمال كل اختبار.</p>
+<p class="muted">أوقفنا اختبار المعالجة الأصلية بعد 10:10 دقائق دون خروج صوت؛ لا يوجد ملف مكتمل له.</p>
+<label>تحرير مساحة العمل · توليد 4:12 · مدة الأغنية 5:23 <audio controls preload="none" src="/user-full-workspace/final.mp3"></audio></label>
+<a href="/user-full-workspace/final.mp3" download="Japanese-song-workspace.mp3">تنزيل MP3 · 6.9 MiB</a>
+<label>المقاطع التجريبية · أول صوت 2:52 · اكتمال 4:33 <audio controls preload="none" src="/user-full-chunks/final.mp3"></audio></label>
+<a href="/user-full-chunks/final.mp3" download="Japanese-song-chunks.mp3">تنزيل MP3 · 7.1 MiB</a>
+</section>
+<script>
+const token='__LAB_TOKEN__', $=id=>document.getElementById(id);
+let context=null,cursor=0,seen=new Set(),currentJob=null,started=0,nodes=[],polling=false,heard=0,first=null;
+const phases={planning:'تجهيز الخطة',semantic:'توليد الرموز الموسيقية — الصوت لم يجهز بعد',acoustic:'تحويل الرموز إلى صوت',decode:'إخراج الصوت',complete:'اكتمل إخراج الصوت'};
+async function post(path,body={}){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Lab-Token':token},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||r.status);return data;}
+function silence(){nodes.forEach(n=>{try{n.stop()}catch{}});nodes=[];cursor=0;}
+$('sample').onchange=()=>{$('seconds').disabled=$('sample').value==='song'};
+document.querySelectorAll('audio').forEach(player=>player.addEventListener('play',()=>{silence();document.querySelectorAll('audio').forEach(other=>{if(other!==player)other.pause()})}));
+$('start').onclick=async()=>{try{silence();document.querySelectorAll('audio').forEach(player=>player.pause());context??=new AudioContext();await context.resume();$('start').disabled=true;$('error').textContent='';$('final').hidden=true;seen.clear();heard=0;first=null;started=performance.now();const result=await post('/start',{profile:$('profile').value,seconds:Number($('seconds').value),sample:$('sample').value});currentJob=result.name;$('stop').disabled=false;$('status').textContent='تحميل الموديل وتجهيز التوليد';}catch(e){$('error').textContent=e.message;$('start').disabled=false;}};
+$('stop').onclick=async()=>{silence();currentJob=null;$('stop').disabled=true;try{await post('/stop');$('status').textContent='تم إيقاف التجربة';}catch(e){$('error').textContent=e.message;}};
+async function poll(){if(polling)return;polling=true;try{const state=await(await fetch('/status',{cache:'no-store'})).json();$('start').disabled=state.running;$('stop').disabled=!state.running&&nodes.length===0;if(currentJob&&state.job?.name===currentJob){
+  const listeningJob=currentJob;
+  for(const event of state.events){if(currentJob!==listeningJob)break;if(event.phase)$('status').textContent=phases[event.phase]||event.phase;if(!event.file||seen.has(event.file))continue;const bytes=await(await fetch(`/${listeningJob}/chunks/${event.file}`)).arrayBuffer();const buffer=await context.decodeAudioData(bytes);if(currentJob!==listeningJob)break;const source=context.createBufferSource();source.buffer=buffer;source.connect(context.destination);cursor=Math.max(cursor,context.currentTime+.12);source.start(cursor);cursor+=buffer.duration;nodes.push(source);source.onended=()=>{nodes=nodes.filter(n=>n!==source)};seen.add(event.file);heard+=buffer.duration;first??=(performance.now()-started)/1000;}
+  if(currentJob!==listeningJob)return;
+  $('stats').textContent=`وصل ${heard.toFixed(1)} ثانية صوت`+(first===null?'':` · أول صوت بعد ${first.toFixed(1)} ثانية`);
+  if(state.tokens&&heard===0)$('stats').textContent+=` · ${state.tokens.stage==='abc'?'رموز الخطة':'رموز الموسيقى'}: ${state.tokens.tokens} (الحد الأقصى ${state.tokens.limit})`;
+  if(!state.running){if(state.report?.returncode===0){$('final').src=`/${currentJob}/final.wav`;$('final').hidden=false;$('status').textContent='اكتمل التوليد؛ يمكنك سماع الملف كاملًا';$('stats').textContent+=` · زمن التوليد ${state.report.wall_seconds.toFixed(1)} ثانية`;}else{$('error').textContent='توقفت التجربة. تأكد أن محرك البرنامج الأساسي مغلق؛ سجل التجربة محفوظ داخل مجلد النتائج.';}currentJob=null;}
+}}catch(e){$('error').textContent=e.message;}finally{polling=false;setTimeout(poll,500)}}poll();
+</script>
+</html>
