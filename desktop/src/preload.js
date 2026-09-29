@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('remiqora', {
   openExternal: (key) => ipcRenderer.invoke('setup:open-external', key),
   openLogs: () => ipcRenderer.invoke('setup:open-logs'),
   showData: () => ipcRenderer.invoke('setup:show-data'),
+  notifyTrack: (title, body) => ipcRenderer.invoke('app:notify-track', title, body),
   onEvent: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('setup:event', handler);

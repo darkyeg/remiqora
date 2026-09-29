@@ -82,7 +82,7 @@ async function isOnline(fetchImpl = fetch) {
  * Everything the first-run screen shows before downloading. `items` is the list of rows,
  * `blocking` is the first problem that stops the setup (or null).
  */
-async function runChecks({ platform, dataRoot, manifest, fetchImpl = fetch }) {
+async function runChecks({ platform, dataRoot, manifest, requiredBytes = manifest.requirements.minFreeBytes, checkNetwork = true, fetchImpl = fetch }) {
   const req = manifest.requirements;
   const items = [];
   let blocking = null;
@@ -98,7 +98,7 @@ async function runChecks({ platform, dataRoot, manifest, fetchImpl = fetch }) {
   const [gpu, free, online] = await Promise.all([
     platform === 'win32-x64' ? detectNvidiaGpu() : Promise.resolve(null),
     freeBytes(dataRoot),
-    isOnline(fetchImpl),
+    checkNetwork ? isOnline(fetchImpl) : Promise.resolve(true),
   ]);
 
   if (platform === 'win32-x64') {
@@ -110,12 +110,14 @@ async function runChecks({ platform, dataRoot, manifest, fetchImpl = fetch }) {
     items.push({ id: 'gpu', ok: true, name: 'Apple Silicon', vramMiB: Math.round(os.totalmem() / 2 ** 20) });
   }
 
-  const enoughDisk = free >= req.minFreeBytes;
-  items.push({ id: 'disk', ok: enoughDisk, freeBytes: free, requiredBytes: req.minFreeBytes });
-  if (!enoughDisk) fail('no-disk', { free, required: req.minFreeBytes });
+  const enoughDisk = free >= requiredBytes;
+  items.push({ id: 'disk', ok: enoughDisk, freeBytes: free, requiredBytes });
+  if (!enoughDisk) fail('no-disk', { free, required: requiredBytes });
 
-  items.push({ id: 'network', ok: online });
-  if (!online) fail('offline');
+  if (checkNetwork) {
+    items.push({ id: 'network', ok: online });
+    if (!online) fail('offline');
+  }
 
   return { items, blocking };
 }

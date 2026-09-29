@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, Notification, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('node:path');
 const { PLATFORM, resourcePaths, defaultDataRoot, layout } = require('./paths');
 const manifest = require('../manifest.json');
@@ -34,6 +34,16 @@ function buildContext(dataRoot) {
     // Test switch: skip the multi-gigabyte components, e.g. REMIQORA_SKIP_COMPONENTS=ace-step,demucs,weights
     skip: (process.env.REMIQORA_SKIP_COMPONENTS || '').split(',').map((s) => s.trim()).filter(Boolean),
   };
+}
+
+function requiredSetupBytes(plan) {
+  const pending = plan.filter((component) => !component.done);
+  if (!pending.length) return 0;
+  if (pending.length === plan.length) return manifest.requirements.minFreeBytes;
+  if (pending.every((component) => !component.network)) {
+    return Math.max(50e6, Math.ceil(pending.reduce((sum, component) => sum + component.weight, 0) * 1.2));
+  }
+  return Math.max(1e9, Math.ceil(pending.reduce((sum, component) => sum + component.weight, 0) * 1.2));
 }
 
 const send = (payload) => { if (win && !win.isDestroyed()) win.webContents.send('setup:event', payload); };
@@ -85,7 +95,10 @@ async function launch() {
       savedPort = server.port;
       await updateConfig(app.getPath('userData'), { port: savedPort });
     }
-    await win.loadURL(url);
+    // The backend usually reuses its port after an app update. A versioned
+    // document URL prevents Chromium from resurrecting an older index.html
+    // (and its old hashed JS) from the previous installation's disk cache.
+    await win.loadURL(`${url}?desktop_version=${encodeURIComponent(app.getVersion())}`);
   } catch (err) {
     showSetup({ state: 'crashed', message: err.message });
   }
@@ -107,6 +120,13 @@ async function startSetup() {
 }
 
 function registerIpc() {
+  ipcMain.handle('app:notify-track', (_event, title, body) => {
+    if (!Notification.isSupported()) return false;
+    const notice = new Notification({ title: String(title).slice(0, 120), body: String(body).slice(0, 180) });
+    notice.on('click', () => { if (win && !win.isDestroyed()) { win.show(); win.focus(); } });
+    notice.show();
+    return true;
+  });
   ipcMain.handle('setup:context', async () => {
     const plan = await describePlan(ctx);
     return {
@@ -117,10 +137,18 @@ function registerIpc() {
       languages: process.env.REMIQORA_LANG ? [process.env.REMIQORA_LANG] : [app.getLocale(), ...app.getPreferredSystemLanguages()],
       dataRoot: ctx.L.root,
       plan,
-      totalBytes: plan.reduce((sum, c) => sum + c.weight, 0),
+      totalBytes: plan.filter((c) => !c.done).reduce((sum, c) => sum + c.weight, 0),
     };
   });
-  ipcMain.handle('setup:checks', (_e, dataRoot) => runChecks({ platform: PLATFORM, dataRoot: dataRoot || ctx.L.root, manifest }));
+  ipcMain.handle('setup:checks', async (_e, dataRoot) => {
+    const root = dataRoot || ctx.L.root;
+    const plan = await describePlan(buildContext(root));
+    return runChecks({
+      platform: PLATFORM, dataRoot: root, manifest,
+      requiredBytes: requiredSetupBytes(plan),
+      checkNetwork: plan.some((component) => !component.done && component.network !== false),
+    });
+  });
   ipcMain.handle('setup:choose-folder', async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -159,8 +187,9 @@ async function boot() {
     ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }])
     : null);
   createWindow();
-  // A saved data root means the user already went through the first run; go straight in when nothing is missing.
-  if (config.dataRoot && (await isSetupComplete(ctx, { ignoreSkipped: true }))) await launch();
+  // A complete install is enough to open the app, including when an older
+  // installer never saved dataRoot in Electron's small config file.
+  if (await isSetupComplete(ctx, { ignoreSkipped: true })) await launch();
   else await showSetup();
 }
 

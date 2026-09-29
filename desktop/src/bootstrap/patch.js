@@ -34,7 +34,9 @@ async function applyGitPatch(patchText, rootDir) {
 
   for (const { target, output } of results) {
     await fsp.mkdir(path.dirname(target), { recursive: true });
-    await fsp.writeFile(target, output);
+    const temporary = `${target}.remiqora-patch-tmp`;
+    await fsp.writeFile(temporary, output);
+    await fsp.rename(temporary, target);
   }
   return results.length;
 }

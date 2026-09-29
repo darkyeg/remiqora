@@ -1,0 +1,112 @@
+===================================================================
+--- a/tools/model_manager_v2.py
++++ b/tools/model_manager_v2.py
+@@ -358,17 +358,34 @@
+     progress=None,
+     cancel_file: Path | None = None,
+ ) -> None:
+     repo = package.download["repo"]
+-    request = Request(download_url(package, remote_path), headers=http_headers(package_source(package)))
++    have = output_path.stat().st_size if output_path.is_file() else 0
++    headers = http_headers(package_source(package))
++    if have:
++        headers["Range"] = f"bytes={have}-"
++    request = Request(download_url(package, remote_path), headers=headers)
+     try:
+         with urlopen(request, timeout=300) as response:
++            status = getattr(response, "status", 200)
++            content_range = response.headers.get("Content-Range", "")
++            if have and status == 206:
++                if not content_range.startswith(f"bytes {have}-"):
++                    raise ManagerError(f"invalid resume range for {output_path}: {content_range}")
++                mode = "ab"
++                total = have
++            else:
++                # The server ignored Range: restart this one file, leaving other
++                # completed files in the package's staging directory intact.
++                mode = "wb"
++                total = 0
+             expected_header = response.headers.get("Content-Length")
+-            expected = int(expected_header) if expected_header is not None else None
++            expected = total + int(expected_header) if expected_header is not None else None
+             output_path.parent.mkdir(parents=True, exist_ok=True)
+-            total = 0
+-            last_report = 0
+-            with output_path.open("wb") as handle:
++            last_report = total
++            if progress is not None:
++                progress(total, expected)
++            with output_path.open(mode) as handle:
+                 while True:
+                     if cancellation_requested(cancel_file):
+                         raise InstallCancelled("download cancelled by user")
+                     chunk = response.read(1024 * 1024)
+@@ -385,8 +402,16 @@
+                 raise InstallCancelled("download cancelled by user")
+             if expected is not None and total != expected:
+                 raise ManagerError(f"downloaded size mismatch for {output_path}: {total} != {expected}")
+     except HTTPError as error:
++        if error.code == 416 and have:
++            remote_size = error.headers.get("Content-Range", "").rsplit("/", 1)[-1]
++            if remote_size.isdigit() and int(remote_size) == have:
++                if progress is not None:
++                    progress(have, have)
++                return
++            output_path.unlink(missing_ok=True)
++            return download_file(package, remote_path, output_path, progress, cancel_file)
+         if package.download.get("gated") is True and error.code in (401, 403):
+             raise ManagerError(
+                 f"{repo}/{remote_path} requires accepted Hugging Face access and a valid HF token"
+             ) from error
+@@ -499,20 +524,37 @@
+             print(f"file remote={remote} local={output.relative_to(models_root)}")
+ 
+     if args.dry_run or args.check:
+         return
++    staging = models_root / f".remiqora-{package.id}.partial"
+     existing_outputs = [output for _remote, output in plan if output.exists()]
+     if existing_outputs and not args.overwrite:
+         if len(existing_outputs) == len(plan) and all(output.is_file() for output in existing_outputs):
++            if staging.is_dir() and not package_manifest_path(package, models_root).is_file():
++                remote_files = {remote: check_remote_file(package, remote) for remote, _output in plan}
++                if any(remote_files[remote].size is None or output.stat().st_size != remote_files[remote].size
++                       for remote, output in plan):
++                    raise ManagerError(f"existing package files need verification: {final_dir}")
++                resolved_revision = next((info.revision for info in remote_files.values() if info.revision), package_revision(package))
++                write_package_manifest(package, models_root, resolved_revision, remote_files)
+             print(f"already installed {package.id} -> {final_dir}")
+             return
+         reusable = reusable_package_outputs(package, records, models_root)
+-        conflicts = [output for output in existing_outputs if output not in reusable]
++        # A power cut during promotion may leave some complete files in the final directory.
++        recoverable = set()
++        if staging.is_dir():
++            for remote, output in plan:
++                if output in existing_outputs and output not in reusable and output.is_file():
++                    info = check_remote_file(package, remote)
++                    if info.size is not None and output.stat().st_size == info.size:
++                        recoverable.add(output)
++        conflicts = [output for output in existing_outputs if output not in reusable and output not in recoverable]
+         if conflicts:
+             raise ManagerError(f"some package files already exist in: {final_dir} (use --overwrite)")
+-        plan = [(remote, output) for remote, output in plan if output not in reusable]
++        plan = [(remote, output) for remote, output in plan if output not in reusable and output not in recoverable]
+     models_root.mkdir(parents=True, exist_ok=True)
+-    staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=models_root))
++    # A stable staging path lets a later run resume after a pause or power loss.
++    staging.mkdir(parents=True, exist_ok=True)
+     cancel_file = Path(args.cancel_file) if getattr(args, "cancel_file", "") else None
+     try:
+         if cancellation_requested(cancel_file):
+             raise InstallCancelled("download cancelled by user")
+@@ -580,9 +622,9 @@
+             package_revision(package),
+         )
+         write_package_manifest(package, models_root, resolved_revision, remote_files)
+     except Exception:
+-        shutil.rmtree(staging, ignore_errors=True)
++        # Keep downloaded and partial files for the next attempt.
+         raise
+     print(f"installed {package.id} -> {final_dir}")
+ 
+ 

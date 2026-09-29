@@ -24,6 +24,9 @@ extraResources:
     to: patches
 
 win:
+  extraResources:
+    - from: resources/native
+      to: native
   target:
     - target: nsis
       arch: [x64]

@@ -48,6 +48,7 @@ function backendEnv({ L, manifest, platform }) {
     PYTHONUTF8: '1',
     ACE_STEP_DIR: L.aceStep,
     YUE2_DIR: L.yue2,
+    ...(platform === 'win32-x64' ? { REMIQORA_YUE2_SERVER_BIN: path.join(L.yue2Bin, 'remiqora_yue2_server.exe') } : {}),
     DEMUCS_DIR: L.demucs,
     FFMPEG_BIN_DIR: ffmpegBin,
     // The prebuilt engine keeps its CUDA runtime DLLs next to the executable.

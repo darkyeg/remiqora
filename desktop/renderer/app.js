@@ -138,7 +138,7 @@
   // ---------- 2. download ----------
   function initRows() {
     rows = {};
-    for (const c of ctx.plan) rows[c.id] = { status: c.done ? 'done' : 'queued', done: 0, total: 0, note: '', weight: c.weight };
+    for (const c of ctx.plan) rows[c.id] = { status: c.done ? 'done' : 'queued', initiallyDone: c.done, done: 0, total: 0, note: '', weight: c.weight };
     samples = [];
     paused = false;
   }
@@ -201,8 +201,9 @@
   }
 
   function renderOverall() {
-    const totalWeight = Object.values(rows).reduce((a, r) => a + r.weight, 0) || 1;
-    const bytes = Object.values(rows).reduce((a, r) => a + r.weight * fraction(r), 0);
+    const pending = Object.values(rows).filter((r) => !r.initiallyDone);
+    const totalWeight = pending.reduce((a, r) => a + r.weight, 0) || 1;
+    const bytes = pending.reduce((a, r) => a + r.weight * fraction(r), 0);
     const pct = Math.min(100, Math.round((bytes / totalWeight) * 100));
     const now = Date.now();
     samples.push([now, bytes]);
@@ -276,7 +277,10 @@
       if (ev.status === 'done') { r.done = r.total = 1; r.note = ''; }
       renderRow(ev.id);
       renderOverall();
-    } else if (ev.type === 'finished') showDone(ev.complete);
+    } else if (ev.type === 'finished') {
+      if (ev.complete) { showStarting(); api.launch(); }
+      else showDone(false);
+    }
     else if (ev.type === 'paused') {
       paused = true;
       const btn = $('#pause');
@@ -292,6 +296,11 @@
     document.documentElement.lang = locale;
     api.onEvent(onEvent);
     if (params.get('state') === 'crashed') return showCrashed(params.get('message') || '');
+    if (ctx.plan.every((component) => component.done)) { showStarting(); api.launch(); return; }
+    if (ctx.plan.filter((component) => !component.done).every((component) => !component.network)) {
+      startDownload();
+      return;
+    }
     runChecksAndShow();
   })();
 })();

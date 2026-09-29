@@ -8,9 +8,9 @@ const { execFileSync } = require('node:child_process');
 const manifest = require('../manifest.json');
 const { evaluateGpu, freeBytes, runChecks } = require('../src/bootstrap/checks');
 const { runSetup, isSetupComplete, describePlan } = require('../src/bootstrap/run');
-const { buildComponents, demucsProject, ffmpegExecutable } = require('../src/bootstrap/components');
+const { buildComponents, demucsProject, ffmpegExecutable, replaceAceStepSource, recoverAceStepSource } = require('../src/bootstrap/components');
 const { extract, tarBinary } = require('../src/bootstrap/extract');
-const { layout, PLATFORM } = require('../src/paths');
+const { layout, PLATFORM, resourcePaths } = require('../src/paths');
 const { backendEnv } = require('../src/server');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'remiqora-setup-'));
@@ -35,6 +35,10 @@ test('checks refuse unsupported platforms and report free space', async () => {
   assert.equal(offline.blocking.code, 'offline');
   const online = await runChecks({ platform: 'darwin-arm64', dataRoot: dir, manifest: roomy, fetchImpl: async () => ({ status: 200 }) });
   assert.equal(online.blocking, null);
+  const update = await runChecks({ platform: 'darwin-arm64', dataRoot: dir, manifest, requiredBytes: 1, fetchImpl: async () => ({ status: 200 }) });
+  assert.equal(update.items.find((item) => item.id === 'disk').requiredBytes, 1, 'updates use their pending bytes, not the full first-run requirement');
+  const localOnly = await runChecks({ platform: 'darwin-arm64', dataRoot: dir, manifest, requiredBytes: 1, checkNetwork: false, fetchImpl: async () => { throw new Error('offline'); } });
+  assert.equal(localOnly.blocking, null, 'an offline-only patch does not require an internet connection');
   const full = await runChecks({ platform: 'darwin-arm64', dataRoot: dir, manifest: { ...manifest, requirements: { ...manifest.requirements, minFreeBytes: Number.MAX_SAFE_INTEGER } }, fetchImpl: async () => ({ status: 200 }) });
   assert.equal(full.blocking.code, 'no-disk');
 });
@@ -92,9 +96,9 @@ test('skipped components are reported and do not count as installed', async () =
 
 test('the real plan has every component, in dependency order', () => {
   const L = layout(tmp(), 'win32-x64', manifest);
-  const resources = { backend: path.join(__dirname, '..', '..', 'backend'), acePatch: path.join(__dirname, '..', '..', 'external', 'patches', 'ace-step.patch') };
+  const resources = resourcePaths(false);
   const ids = buildComponents({ L, manifest, platform: 'win32-x64', resources }).map((c) => c.id);
-  assert.deepEqual(ids, ['uv', 'ffmpeg', 'engine', 'backend-env', 'ace-step', 'ace-models', 'demucs', 'weights']);
+  assert.deepEqual(ids, ['uv', 'ffmpeg', 'engine', 'engine-workspace', 'model-manager-resume', 'backend-env', 'ace-step', 'ace-models', 'demucs', 'weights']);
 });
 
 test('Demucs gets the CUDA torch index off macOS only', () => {
@@ -124,6 +128,7 @@ test('the backend environment points every path at the data root', () => {
   assert.equal(env.REMIQORA_DATA_DIR, L.data);
   assert.equal(env.REMIQORA_LOG_DIR, L.logs);
   assert.equal(env.YUE2_DIR, L.yue2);
+  assert.equal(env.REMIQORA_YUE2_SERVER_BIN, path.join(L.yue2Bin, 'remiqora_yue2_server.exe'));
   assert.equal(env.HF_HOME, L.hfHome, 'model caches stay inside the chosen folder');
   assert.equal(env.TORCH_HOME, L.torchHome);
   assert.equal(env.CUDA_BIN_DIR, L.yue2Bin);
@@ -151,7 +156,7 @@ test('the uv component finds the binary inside a tarball with a top-level folder
     sha256: crypto.createHash('sha256').update(body).digest('hex'), bytes: body.length, bin: 'uv-aarch64-apple-darwin/uv',
   };
   const L = layout(tmp(), 'darwin-arm64', fake);
-  const resources = { backend: path.join(__dirname, '..', '..', 'backend'), acePatch: path.join(__dirname, '..', '..', 'external', 'patches', 'ace-step.patch') };
+  const resources = resourcePaths(false);
   const uv = buildComponents({ L, manifest: fake, platform: 'darwin-arm64', resources }).find((c) => c.id === 'uv');
   await uv.install({ L, manifest: fake, platform: 'darwin-arm64', signal: undefined }, () => {});
   assert.equal(fs.readFileSync(L.uvBin, 'utf8'), 'fake uv binary');
@@ -171,7 +176,7 @@ test('ffmpeg: a single static binary (the macOS build) is installed where the ba
     sha256: crypto.createHash('sha256').update(body).digest('hex'), bytes: body.length,
   };
   const L = layout(tmp(), 'darwin-arm64', fake);
-  const resources = { backend: path.join(__dirname, '..', '..', 'backend'), acePatch: path.join(__dirname, '..', '..', 'external', 'patches', 'ace-step.patch') };
+  const resources = resourcePaths(false);
   const ffmpeg = buildComponents({ L, manifest: fake, platform: 'darwin-arm64', resources }).find((c) => c.id === 'ffmpeg');
   assert.equal(await ffmpeg.verify({}), false);
   await ffmpeg.install({ L, manifest: fake, platform: 'darwin-arm64' }, () => {});
@@ -185,10 +190,64 @@ test('ffmpeg: a single static binary (the macOS build) is installed where the ba
 
 test('the Windows FFmpeg asset keeps its recorded version and folder layout', () => {
   const L = layout(tmp(), 'win32-x64', manifest);
-  const resources = { backend: path.join(__dirname, '..', '..', 'backend'), acePatch: path.join(__dirname, '..', '..', 'external', 'patches', 'ace-step.patch') };
+  const resources = resourcePaths(false);
   const ffmpeg = buildComponents({ L, manifest, platform: 'win32-x64', resources }).find((c) => c.id === 'ffmpeg');
   assert.equal(ffmpeg.version, manifest.ffmpeg.version, 'unchanged, so existing installs are not re-downloaded');
   assert.match(ffmpegExecutable(L, manifest, 'win32-x64'), /ffmpeg-9\.0\.1-essentials_build[\\/]bin[\\/]ffmpeg\.exe$/);
+});
+
+test('the workspace engine update copies only its own executable and detects corruption', async () => {
+  const L = layout(tmp(), 'win32-x64', manifest);
+  const resources = resourcePaths(false);
+  const engine = buildComponents({ L, manifest, platform: 'win32-x64', resources })
+    .find((component) => component.id === 'engine-workspace');
+  fs.mkdirSync(L.yue2Bin, { recursive: true });
+  const original = path.join(L.yue2Bin, 'audiocpp_server.exe');
+  const weights = path.join(L.yue2, 'models', 'keep.txt');
+  fs.mkdirSync(path.dirname(weights), { recursive: true });
+  fs.writeFileSync(original, 'original engine');
+  fs.writeFileSync(weights, 'existing model');
+  assert.equal(await engine.verify(), false);
+  await engine.install();
+  assert.equal(await engine.verify(), true);
+  assert.equal(fs.readFileSync(original, 'utf8'), 'original engine');
+  assert.equal(fs.readFileSync(weights, 'utf8'), 'existing model');
+  fs.writeFileSync(path.join(L.yue2Bin, 'remiqora_yue2_server.exe'), 'corrupt');
+  assert.equal(await engine.verify(), false);
+  await engine.install();
+  assert.equal(await engine.verify(), true);
+});
+
+test('ACE-Step source update keeps existing checkpoints without copying their bytes', async () => {
+  const dir = tmp();
+  const current = path.join(dir, 'ACE-Step');
+  const staged = path.join(dir, 'ACE-Step.tmp');
+  fs.mkdirSync(path.join(current, 'checkpoints'), { recursive: true });
+  fs.mkdirSync(staged);
+  fs.writeFileSync(path.join(current, 'checkpoints', 'model.bin'), 'saved weights');
+  fs.writeFileSync(path.join(staged, '.remiqora-patched'), 'new source');
+
+  await replaceAceStepSource(current, staged);
+
+  assert.equal(fs.readFileSync(path.join(current, 'checkpoints', 'model.bin'), 'utf8'), 'saved weights');
+  assert.equal(fs.readFileSync(path.join(current, '.remiqora-patched'), 'utf8'), 'new source');
+  assert.equal(fs.existsSync(`${current}.previous`), false);
+});
+
+test('ACE-Step source update recovers checkpoints after an interrupted swap', async () => {
+  const dir = tmp();
+  const current = path.join(dir, 'ACE-Step');
+  const previous = `${current}.previous`;
+  fs.mkdirSync(path.join(previous, 'checkpoints'), { recursive: true });
+  fs.writeFileSync(path.join(previous, 'checkpoints', 'model.bin'), 'saved weights');
+  await recoverAceStepSource(current);
+  assert.equal(fs.readFileSync(path.join(current, 'checkpoints', 'model.bin'), 'utf8'), 'saved weights');
+
+  fs.renameSync(current, previous);
+  fs.mkdirSync(current);
+  await recoverAceStepSource(current);
+  assert.equal(fs.readFileSync(path.join(current, 'checkpoints', 'model.bin'), 'utf8'), 'saved weights');
+  assert.equal(fs.existsSync(previous), false);
 });
 
 test('every uv asset in the manifest names a binary that is "uv" or ends in "/uv"', () => {

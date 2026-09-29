@@ -18,7 +18,7 @@ async function pendingComponents(ctx) {
 /** Description of the plan for the UI: what will be installed and how much it weighs. */
 async function describePlan(ctx) {
   const { all, done } = await pendingComponents(ctx);
-  return all.map((c) => ({ id: c.id, weight: c.weight, done: done.has(c.id) }));
+  return all.map((c) => ({ id: c.id, weight: c.weight, network: c.network !== false, done: done.has(c.id) }));
 }
 
 /**

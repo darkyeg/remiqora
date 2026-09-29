@@ -12,6 +12,7 @@ const { IS_WINDOWS } = require('../paths');
 const exists = (p) => fsp.access(p).then(() => true, () => false);
 const sum = (list) => list.reduce((a, b) => a + b, 0);
 const sha1 = (text) => crypto.createHash('sha1').update(text).digest('hex').slice(0, 12);
+const fileHash = async (file) => crypto.createHash('sha256').update(await fsp.readFile(file)).digest('hex');
 
 /** Environment for uv: everything (Python, wheel cache) stays under the data root the user chose. */
 function uvEnv(L) {
@@ -108,6 +109,36 @@ async function placeEngineFiles(extracted, L) {
   }
 }
 
+/** Recover a source swap interrupted before its checkpoints were moved back. */
+async function recoverAceStepSource(current) {
+  const previous = `${current}.previous`;
+  if (!(await exists(previous))) return;
+  if (!(await exists(current))) {
+    await fsp.rename(previous, current);
+    return;
+  }
+  const oldCheckpoints = path.join(previous, 'checkpoints');
+  const newCheckpoints = path.join(current, 'checkpoints');
+  if ((await exists(oldCheckpoints)) && !(await exists(newCheckpoints))) {
+    await fsp.rename(oldCheckpoints, newCheckpoints);
+  }
+  await fsp.rm(previous, { recursive: true, force: true });
+}
+
+/** Replace the source tree without deleting downloaded model checkpoints. */
+async function replaceAceStepSource(current, staged) {
+  await recoverAceStepSource(current);
+  const previous = `${current}.previous`;
+  if (await exists(current)) await fsp.rename(current, previous);
+  try {
+    await fsp.rename(staged, current);
+    await recoverAceStepSource(current);
+  } catch (error) {
+    await recoverAceStepSource(current);
+    throw error;
+  }
+}
+
 /**
  * The ordered list of things the first run installs. Each component:
  *   id, weight (bytes, for the overall bar), version (a change re-runs it),
@@ -120,6 +151,8 @@ function buildComponents({ L, manifest, platform, resources }) {
   const ffAsset = manifest.ffmpeg.assets[platform];
   const logFile = path.join(L.logs, 'setup.log');
   const patchHash = () => fsp.readFile(resources.acePatch, 'utf8').then(sha1).catch(() => 'nopatch');
+  const modelManagerPatch = fs.readFileSync(resources.yueResumePatch, 'utf8');
+  const modelManagerVersion = `${manifest.engine.tag}-${sha1(modelManagerPatch)}`;
 
   const uv = {
     id: 'uv',
@@ -185,6 +218,48 @@ function buildComponents({ L, manifest, platform, resources }) {
     },
   };
 
+  const nativeWorkspace = platform === 'win32-x64' ? {
+    id: 'engine-workspace',
+    weight: fs.statSync(resources.nativeWinServer).size,
+    network: false,
+    version: sha1(fs.readFileSync(resources.nativeWinServer)),
+    async verify() {
+      const target = path.join(L.yue2Bin, 'remiqora_yue2_server.exe');
+      return (await exists(target)) && (await fileHash(target)) === (await fileHash(resources.nativeWinServer));
+    },
+    async install() {
+      const target = path.join(L.yue2Bin, 'remiqora_yue2_server.exe');
+      const temporary = `${target}.tmp`;
+      await fsp.mkdir(L.yue2Bin, { recursive: true });
+      try {
+        await fsp.copyFile(resources.nativeWinServer, temporary);
+        await fsp.rename(temporary, target);
+      } finally {
+        await fsp.rm(temporary, { force: true });
+      }
+    },
+  } : null;
+
+  const modelManagerResume = {
+    id: 'model-manager-resume',
+    weight: 1024,
+    network: false,
+    version: modelManagerVersion,
+    async verify() {
+      const marker = path.join(L.yue2, 'tools', '.remiqora-resume-version');
+      const script = path.join(L.yue2, 'tools', 'model_manager_v2.py');
+      return (await fsp.readFile(marker, 'utf8').catch(() => '')) === modelManagerVersion
+        && (await fsp.readFile(script, 'utf8').catch(() => '')).includes('A stable staging path lets a later run resume');
+    },
+    async install() {
+      const script = path.join(L.yue2, 'tools', 'model_manager_v2.py');
+      if (!(await fsp.readFile(script, 'utf8')).includes('A stable staging path lets a later run resume')) {
+        await applyGitPatch(modelManagerPatch, L.yue2);
+      }
+      await fsp.writeFile(path.join(L.yue2, 'tools', '.remiqora-resume-version'), modelManagerVersion);
+    },
+  };
+
   const backendEnv = {
     id: 'backend-env',
     weight: 60e6,
@@ -205,8 +280,9 @@ function buildComponents({ L, manifest, platform, resources }) {
     version: manifest.aceStep.commit.slice(0, 7),
     verify: async () => (await exists(path.join(L.aceStep, '.remiqora-patched'))) && (await exists(path.join(L.aceStep, '.venv'))),
     async install(ctx, report) {
+      await recoverAceStepSource(L.aceStep);
       const marker = path.join(L.aceStep, '.remiqora-patched');
-      const wanted = await patchHash();
+      const wanted = `${manifest.aceStep.commit}:${await patchHash()}`;
       const patched = (await exists(marker)) && (await fsp.readFile(marker, 'utf8')).trim() === wanted;
       if (!patched) {
         // The source archive is a sliver of this component's weight; `uv sync` below is the bulk.
@@ -216,8 +292,7 @@ function buildComponents({ L, manifest, platform, resources }) {
         await extract(archive, tmp, { stripComponents: 1 });
         await applyGitPatch(await fsp.readFile(resources.acePatch, 'utf8'), tmp);
         await fsp.writeFile(path.join(tmp, '.remiqora-patched'), wanted);
-        await fsp.rm(L.aceStep, { recursive: true, force: true });
-        await fsp.rename(tmp, L.aceStep);
+        await replaceAceStepSource(L.aceStep, tmp);
         await fsp.rm(archive, { force: true });
       }
       await withCacheGrowth(L.uvCache, manifest.aceStep.approxBytes, report, () =>
@@ -279,7 +354,7 @@ function buildComponents({ L, manifest, platform, resources }) {
   };
 
   // Order matters: the backend venv provides the Python that runs the weights downloader.
-  return [uv, ffmpeg, engineStep, backendEnv, aceStep, aceModels, demucs, weights];
+  return [uv, ffmpeg, engineStep, ...(nativeWorkspace ? [nativeWorkspace] : []), modelManagerResume, backendEnv, aceStep, aceModels, demucs, weights];
 }
 
 /** Path of ffmpeg: a pinned build under tools/ffmpeg where there is one, otherwise whatever the system has. */
@@ -294,4 +369,4 @@ function ffmpegExecutable(L, manifest, platform) {
   return path.join('/usr/local/bin', 'ffmpeg');
 }
 
-module.exports = { buildComponents, ffmpegExecutable, demucsProject, dirSize };
+module.exports = { buildComponents, ffmpegExecutable, demucsProject, dirSize, replaceAceStepSource, recoverAceStepSource };

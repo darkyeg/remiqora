@@ -63,6 +63,7 @@ Everything lives under the chosen folder, so removing it removes the app's data:
 | `tools/python` | managed Python 3.12 (uv never uses a system Python) | downloaded by uv |
 | `tools/ffmpeg` | FFmpeg: a zip build on Windows, one static binary on macOS (GPL builds, downloaded, never redistributed) | Gyan builds / shaka-project static-ffmpeg-binaries, pinned |
 | `engines/YuE2` | `audiocpp_server`, CUDA/Metal libraries, model downloader | audio.cpp release, pinned |
+| `engines/YuE2/build/windows-cuda-release/bin/remiqora_yue2_server.exe` | YuE2 server with completed prefill workspace released; Windows only, packaged with the installer | locally built from pinned audio.cpp v0.8.1 |
 | `engines/ACE-Step-1.5` | ACE-Step at the pinned commit with `external/patches/ace-step.patch` applied, plus its `uv sync` environment | GitHub source archive |
 | `engines/ACE-Step-1.5/checkpoints` | ACE-Step generation models (~9.4 GB), fetched with `acestep-download` so the first generation does not stall | Hugging Face |
 | `engines/Demucs` | a uv project with Demucs and CUDA torch | PyPI / PyTorch index |
@@ -80,6 +81,30 @@ not guarantee, so it is verified by the commit id and by the patch applying clea
 Progress is kept in `state.json`: a component is skipped on the next start only if its recorded version matches and
 its files are still on disk, so a new app version with new pins downloads just what changed. Downloads resume with
 `Range` requests and are verified before use.
+
+## Updating an existing install
+
+The app does not install updates automatically yet. Installing a newer Windows installer over the same per-user
+installation keeps the configured data root, models, projects and download cache. On launch, setup checks component
+versions and required files. An app-only update reuses the existing engines and models; a changed component downloads
+only that component. The setup screen checks free space for pending components, not the full first-run 50 GB. No full
+copy of the model folder is made during an update. ACE-Step source changes move its checkpoints into the new tree
+without copying them.
+
+Version 0.2.3 includes a separate Windows YuE2 server executable with the tested prefill workspace release. Setup
+copies this small executable beside the existing native server and verifies its hash; it does not fetch or replace
+weights, CUDA DLLs or the original server. The desktop backend selects the bundled server after setup. This build
+includes YuE2, SheetSage2 and MuScriptor support. The acoustic 20-second chunk experiment is not part of the app.
+To reproduce the native binary locally, prepare the pinned checkout and import libraries as in
+`experiments/yue2-streaming/README.md`, then run `python experiments/yue2-streaming/build_release.py` from the
+repository root with Visual Studio C++ tools and the installed v0.8.1 ggml DLLs. The source change is in
+`external/patches/yue-workspace-release.patch`.
+
+Downloads of pinned archives and YuE2 model files retain partial bytes and resume after interruption when the server
+supports HTTP Range. Completed components are skipped. ACE-Step models use Hugging Face's own cache and retry path.
+Temporary archives and replacement components still need some extra disk space; setup estimates this for pending
+components and stops before installation when space is insufficient. An interrupted music generation must be started
+again; only setup downloads are resumable.
 
 ## Test switches
 

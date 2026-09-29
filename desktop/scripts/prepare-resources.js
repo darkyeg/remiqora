@@ -39,6 +39,15 @@ fs.cpSync(dist, path.join(out, 'frontend', 'dist'), { recursive: true });
 
 fs.mkdirSync(path.join(out, 'patches'), { recursive: true });
 fs.copyFileSync(path.join(root, 'external', 'patches', 'ace-step.patch'), path.join(out, 'patches', 'ace-step.patch'));
+fs.copyFileSync(path.join(root, 'external', 'patches', 'yue-model-resume.patch'), path.join(out, 'patches', 'yue-model-resume.patch'));
+
+if (process.platform === 'win32') {
+  const native = path.join(root, 'desktop', 'native', 'win32-x64', 'remiqora_yue2_server.exe');
+  if (!fs.existsSync(native)) throw new Error('Build the adopted YuE2 server with experiments/yue2-streaming/build_release.py');
+  const nativeOut = path.join(out, 'native', 'win32-x64');
+  fs.mkdirSync(nativeOut, { recursive: true });
+  fs.copyFileSync(native, path.join(nativeOut, 'remiqora_yue2_server.exe'));
+}
 
 // Guard: fail the build rather than ship personal data.
 const forbidden = [];
