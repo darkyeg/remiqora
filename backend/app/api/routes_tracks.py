@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from .. import db
 from ..config import MODELS
+from .audio_export import mp3_download
 
 router = APIRouter(prefix="/api/tracks", tags=["tracks"])
 
@@ -191,6 +192,14 @@ async def track_audio(track_id: int):
     if not row or not Path(row["audio_path"]).exists():
         return JSONResponse({"error": "audio not found"}, status_code=404)
     return FileResponse(row["audio_path"])
+
+
+@router.get("/{track_id}/download.mp3")
+async def download_track_mp3(track_id: int):
+    row = db.get_track(track_id)
+    if not row or not Path(row["audio_path"]).exists():
+        raise HTTPException(status_code=404, detail="audio not found")
+    return await mp3_download(Path(row["audio_path"]), f"{_sanitize(row['title'])}.mp3")
 
 
 @router.get("/{track_id}/abc")

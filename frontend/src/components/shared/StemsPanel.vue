@@ -81,10 +81,10 @@ async function removeStems() {
   stemUrls.value = null
 }
 
-function download(name: string, url: string) {
+function download(name: string, url: string, format: 'mp3' | 'wav') {
   const a = document.createElement('a')
-  a.href = url
-  a.download = `${name}_${props.trackId}.wav`
+  a.href = format === 'mp3' ? `/api/tracks/${props.trackId}/stems/${name}/download.mp3` : url
+  a.download = `${name}_${props.trackId}.${format}`
   a.click()
 }
 
@@ -180,7 +180,10 @@ onBeforeUnmount(clearPoll)
         <div v-for="name in STEM_ORDER.filter((n) => stemUrls?.[n])" :key="name" class="space-y-1 rounded-lg border border-border/60 bg-panel p-2">
           <p class="text-xs text-text-dim">{{ STEM_LABELS[name] }}</p>
           <WaveformPlayer compact :src="stemUrls[name]" />
-          <button type="button" class="text-xs text-accent1 hover:underline" @click="download(name, stemUrls![name])">{{ t('stemsPanel.download') }}</button>
+          <div class="flex gap-3">
+            <button type="button" class="text-xs text-accent1 hover:underline" @click="download(name, stemUrls![name], 'mp3')">{{ t('aceJob.downloadMp3') }}</button>
+            <button type="button" class="text-xs text-accent1 hover:underline" @click="download(name, stemUrls![name], 'wav')">{{ t('aceJob.downloadWav') }}</button>
+          </div>
         </div>
         <div class="flex gap-2">
           <button type="button" class="accent-gradient rounded-lg px-2.5 py-1 text-xs font-medium text-white" @click="start(true)">{{ t('stemsPanel.recreate') }}</button>

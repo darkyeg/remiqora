@@ -67,6 +67,10 @@ export function trackAudioUrl(id: number): string {
   return `/api/tracks/${id}/audio`
 }
 
+export function trackMp3Url(id: number): string {
+  return `/api/tracks/${id}/download.mp3`
+}
+
 export async function trackAbc(id: number): Promise<string> {
   const resp = await fetch(`/api/tracks/${id}/abc`)
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)

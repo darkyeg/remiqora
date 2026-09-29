@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 
 from .. import db
 from .. import stems
+from .audio_export import mp3_download
 
 router = APIRouter(prefix="/api/tracks", tags=["stems"])
 
@@ -78,3 +79,16 @@ async def stem_file(track_id: int, stem_name: str):
     if not path or not Path(path).exists():
         raise HTTPException(status_code=404, detail="stem file not found")
     return FileResponse(path)
+
+
+@router.get("/{track_id}/stems/{stem_name}/download.mp3")
+async def download_stem_mp3(track_id: int, stem_name: str):
+    if stem_name not in stems.STEM_NAMES:
+        raise HTTPException(status_code=404, detail="unknown stem")
+    row = db.get_track(track_id)
+    if not row or not row["stems_json"]:
+        raise HTTPException(status_code=404, detail="stems not found")
+    path = json.loads(row["stems_json"]).get(stem_name)
+    if not path or not Path(path).exists():
+        raise HTTPException(status_code=404, detail="stem file not found")
+    return await mp3_download(Path(path), f"{stem_name}_{track_id}.mp3")
