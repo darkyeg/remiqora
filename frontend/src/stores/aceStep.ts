@@ -2,6 +2,7 @@ import { acceptHMRUpdate, defineStore } from 'pinia'
 import * as api from '../api/aceStep'
 import type { GenerateMusicRequest } from '../api/aceStep'
 import * as tracksApi from '../api/tracks'
+import { useNotificationsStore } from './notifications'
 import type { JobStatus } from '../types'
 import { i18n } from '../i18n'
 
@@ -15,6 +16,7 @@ export interface AceJob {
   id: string
   status: JobStatus
   createdAt: number
+  startedAt?: number
   title: string
   lyrics: string
   model?: string
@@ -141,6 +143,7 @@ export const useAceStepStore = defineStore('aceStep', {
       }
     },
     _applyResult(job: AceJob, entry: api.QueryResultEntry) {
+      if (job.finalized) return
       let parsed: RawResultEntry[]
       try {
         parsed = JSON.parse(entry.result)
@@ -154,6 +157,7 @@ export const useAceStepStore = defineStore('aceStep', {
         job.audioUrls = parsed.filter((p) => p.file).map((p) => `/api/ace${p.file}`)
         job.durationSec = first.metas?.duration ?? null
         job.finalized = true
+        useNotificationsStore().trackDone('ace_step', job.title)
         void this._persistJob(job)
       } else if (entry.status === 2) {
         job.status = first.error === 'Cancelled by user' ? 'cancelled' : 'failed'
@@ -168,7 +172,8 @@ export const useAceStepStore = defineStore('aceStep', {
         job.finalized = true
       } else {
         job.status = first.stage === 'queued' ? 'queued' : 'running'
-        job.progress = Math.round((first.progress || 0) * 100)
+        if (job.status === 'running' && !job.startedAt) job.startedAt = Date.now()
+        job.progress = Math.min(99, Math.max(0, Math.round((first.progress || 0) * 100)))
         job.stage = first.stage
       }
     },
@@ -206,8 +211,8 @@ export const useAceStepStore = defineStore('aceStep', {
       job.audioUrls = persistedUrls
       job.dbIds = dbIds
     },
-    async submit(req: GenerateMusicRequest, refAudioFile: File | null, title: string): Promise<AceJob> {
-      const res = await api.releaseTask(req, refAudioFile)
+    async submit(req: GenerateMusicRequest, sourceAudioFile: File | null, title: string, styleAudioFile: File | null = null): Promise<AceJob> {
+      const res = await api.releaseTask(req, sourceAudioFile, styleAudioFile)
       const job: AceJob = {
         id: res.task_id,
         status: 'queued',

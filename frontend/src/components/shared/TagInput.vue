@@ -70,6 +70,12 @@ function onInput(): void {
   highlighted.value = -1
 }
 
+function onBlur(): void {
+  focused.value = false
+  if (draft.value.trim()) addTag(draft.value)
+  suggestionsOpen.value = false
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'ArrowDown' && suggestions.value.length) {
     e.preventDefault()
@@ -119,7 +125,7 @@ function selectSuggestion(s: string): void {
         @keydown="onKeydown"
         @paste="onPaste"
         @focus="focused = true; suggestionsOpen = true"
-        @blur="focused = false"
+        @blur="onBlur"
       />
       <button
         v-if="tags.length"

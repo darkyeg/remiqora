@@ -9,9 +9,10 @@ import ChipGroup from '../../components/shared/ChipGroup.vue'
 import CollapsibleDetails from '../../components/shared/CollapsibleDetails.vue'
 import HelpModal from '../../components/shared/HelpModal.vue'
 import TagInput from '../../components/shared/TagInput.vue'
+import { languageLabel } from '../../utils/languageLabel'
 
 const store = useAceStepStore()
-const { t, tm } = useI18n()
+const { t, tm, locale } = useI18n()
 const { loras, add: addLora, remove: removeLora } = useLoraRegistry()
 
 type Mode = 'simple' | 'custom'
@@ -22,6 +23,7 @@ interface AcePreset {
   mode: Mode
   simpleQuery: string
   customPrompt: string
+  preserveStylePrompt?: boolean
   instrumental: boolean
   customLyrics: string
   duration: number
@@ -55,6 +57,7 @@ function saveCurrentPreset() {
     mode: mode.value,
     simpleQuery: simpleQuery.value,
     customPrompt: customPrompt.value,
+    preserveStylePrompt: preserveStylePrompt.value,
     instrumental: instrumental.value,
     customLyrics: customLyrics.value,
     duration: duration.value,
@@ -82,6 +85,7 @@ function applyPreset(name: string) {
   mode.value = p.mode || 'simple'
   simpleQuery.value = p.simpleQuery || ''
   customPrompt.value = p.customPrompt || ''
+  preserveStylePrompt.value = p.preserveStylePrompt ?? true
   instrumental.value = !!p.instrumental
   customLyrics.value = p.customLyrics || ''
   if (p.duration) duration.value = p.duration
@@ -111,6 +115,7 @@ watch(
       if (params.prompt) {
         mode.value = 'custom'
         customPrompt.value = params.prompt
+        preserveStylePrompt.value = params.use_cot_caption === undefined ? false : !params.use_cot_caption
       } else if (params.query) {
         mode.value = 'simple'
         simpleQuery.value = params.query
@@ -135,11 +140,13 @@ watch(
 const mode = ref<Mode>('simple')
 const simpleQuery = ref('')
 const customPrompt = ref('')
+const preserveStylePrompt = ref(true)
 const instrumental = ref(false)
 const customLyrics = ref('')
 
 const useRefAudio = ref(false)
 const refAudioFile = ref<File | null>(null)
+const styleAudioFile = ref<File | null>(null)
 const taskType = ref<TaskType>('cover')
 const repaintStart = ref<number | null>(null)
 const repaintEnd = ref<number | null>(null)
@@ -180,7 +187,7 @@ const TASK_TYPES = computed<{ value: TaskType; label: string }[]>(() => [
 ])
 const TRACK_NAME_OPTIONS = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'keys', 'strings', 'brass', 'woodwinds', 'synth', 'percussion', 'other']
 const TIME_SIGNATURES = ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8']
-// Native self-names, not translated - matches constants.VALID_LANGUAGES in
+// Native self-names - matches constants.VALID_LANGUAGES in
 // the ACE-Step API (external/ACE-Step-1.5/acestep/constants.py).
 const VOCAL_LANGUAGES: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
@@ -313,6 +320,10 @@ function onRefFileChange(e: Event) {
   refAudioFile.value = file
 }
 
+function onStyleFileChange(e: Event) {
+  styleAudioFile.value = (e.target as HTMLInputElement).files?.[0] ?? null
+}
+
 function registerNewLora() {
   addLora(newLoraName.value, newLoraPath.value)
   newLoraName.value = ''
@@ -355,6 +366,7 @@ async function submit() {
     }
     title = customPrompt.value.trim().slice(0, 60)
     req.prompt = customPrompt.value.trim()
+    req.use_cot_caption = !preserveStylePrompt.value
     req.lyrics = instrumental.value ? '' : customLyrics.value
   }
 
@@ -391,7 +403,7 @@ async function submit() {
 
   submitting.value = true
   try {
-    await store.submit(req, refFile, title)
+    await store.submit(req, refFile, title, styleAudioFile.value)
   } catch (err) {
     formError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -491,6 +503,11 @@ async function submit() {
             <button type="button" class="text-xs text-accent1 hover:underline" @click="helpOpen = 'style'">{{ t('common.help') }}</button>
           </div>
           <TagInput v-model="customPrompt" :placeholder="t('aceGen.stylePlaceholder')" />
+          <label class="flex items-center gap-2 text-sm text-text">
+            <input v-model="preserveStylePrompt" type="checkbox" class="rounded border-border" />
+            {{ t('aceGen.preserveStylePrompt') }}
+          </label>
+          <p class="text-xs text-text-dim">{{ t('aceGen.preserveStylePromptHint') }}</p>
         </div>
         <label class="flex items-center gap-2 text-sm text-text-dim">
           <input v-model="instrumental" type="checkbox" class="rounded border-border" />
@@ -503,6 +520,13 @@ async function submit() {
           </div>
           <textarea v-model="customLyrics" rows="6" class="w-full rounded-lg border border-border bg-panel-2 p-2.5 font-mono text-sm text-text" :placeholder="t('aceGen.lyricsPlaceholder')"></textarea>
         </div>
+      </div>
+
+      <div class="space-y-2 rounded-lg border border-border bg-panel-2/50 p-3">
+        <label class="text-sm font-medium text-text">{{ t('aceGen.styleReference') }}</label>
+        <p class="text-xs text-text-dim">{{ t('aceGen.styleReferenceHint') }}</p>
+        <input type="file" accept="audio/*" class="block w-full text-xs text-text-dim file:mr-3 file:rounded-md file:border-0 file:accent-gradient file:px-3 file:py-1.5 file:text-white" @change="onStyleFileChange" />
+        <p v-if="styleAudioFile" class="text-xs text-text-dim">{{ styleAudioFile.name }}</p>
       </div>
 
       <div class="space-y-2 rounded-lg border border-border bg-panel-2/50 p-3">
@@ -589,7 +613,7 @@ async function submit() {
             <label class="text-xs text-text-dim">{{ t('aceGen.vocalLanguage') }}</label>
             <select v-model="vocalLanguage" class="w-full rounded-lg border border-border bg-panel-2 p-2 text-sm text-text">
               <option value="">{{ t('aceGen.vocalLanguageAuto') }}</option>
-              <option v-for="lang in VOCAL_LANGUAGES" :key="lang.code" :value="lang.code">{{ lang.label }}</option>
+              <option v-for="lang in VOCAL_LANGUAGES" :key="lang.code" :value="lang.code">{{ languageLabel(lang.code, lang.label, locale) }}</option>
             </select>
           </div>
           <div>

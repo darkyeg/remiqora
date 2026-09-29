@@ -70,7 +70,7 @@ function applyPreset(name: string) {
   precision.value = p.precision || 'q8_0'
   abc.value = p.abc || ''
   cfgScale.value = p.cfgScale ?? null
-  numInferenceSteps.value = p.numInferenceSteps ?? null
+  numInferenceSteps.value = p.numInferenceSteps ?? 8
   if (p.semantic) Object.assign(semantic, p.semantic)
   if (p.abcSampling) Object.assign(abcSampling, p.abcSampling)
 }
@@ -94,7 +94,7 @@ watch(
     if (params.seed != null) seed.value = params.seed
     if (params.abc != null) abc.value = params.abc
     if (params.cfg_scale != null) cfgScale.value = params.cfg_scale
-    if (params.num_inference_steps != null) numInferenceSteps.value = params.num_inference_steps
+    numInferenceSteps.value = params.num_inference_steps ?? 8
     if (params.semantic) Object.assign(semantic, params.semantic)
     if (params.abc_sampling) Object.assign(abcSampling, params.abc_sampling)
     store.clearPendingParamsInsert()
@@ -118,7 +118,7 @@ const randomSeed = ref(false)
 const batchSize = ref<1 | 2 | 3 | 4>(1)
 
 const cfgScale = ref<number | null>(null)
-const numInferenceSteps = ref<number | null>(null)
+const numInferenceSteps = ref<number | null>(8)
 const semantic = reactive<Record<string, number | null>>({
   temperature: null, top_p: null, top_k: null, repetition_penalty: null, penalty_window: null, min_tokens: null, max_tokens: null,
 })
@@ -165,7 +165,7 @@ function onCoverFileChange(e: Event) {
 }
 
 async function extractAbc() {
-  if (!coverFile.value) return
+  if (!coverFile.value || extracting.value || store.isBusy) return
   coverError.value = ''
   extracting.value = true
   coverStatus.value = t('yueGen.loadingSheetSage')
@@ -216,6 +216,7 @@ function buildOptions(): GenerateOptions {
 }
 
 async function submit() {
+  if (extracting.value || store.isBusy) return
   formError.value = ''
   if (!lyrics.value.trim()) {
     formError.value = t('yueGen.enterLyrics')
@@ -246,7 +247,7 @@ async function submit() {
 <template>
   <div class="lg:sticky lg:top-20 lg:self-start">
     <div class="space-y-4 rounded-xl border border-border bg-panel p-4">
-      <button type="button" class="accent-gradient w-full rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50" :disabled="submitting" @click="submit">
+      <button type="button" class="accent-gradient w-full rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50" :disabled="submitting || extracting || store.isBusy" @click="submit">
         {{ submitting ? t('yueGen.submitting') : t('yueGen.submit') }}
       </button>
       <p v-if="formError" class="rounded-lg bg-status-failed/10 p-2 text-xs text-status-failed">{{ formError }}</p>
@@ -339,6 +340,15 @@ async function submit() {
       </div>
       <p class="text-xs text-text-dim">{{ COT_HINTS[cot] }}</p>
 
+      <div class="space-y-1.5 rounded-lg border border-border bg-panel-2/50 p-3">
+        <label class="text-sm font-medium text-text">{{ t('yueGen.audioStepsLabel') }}</label>
+        <ChipGroup :model-value="numInferenceSteps ?? 8" :options="[
+          { value: 8, label: t('yueGen.audioStepsFast') },
+          { value: 32, label: t('yueGen.audioStepsQuality') },
+        ]" @update:model-value="numInferenceSteps = Number($event)" />
+        <p class="text-xs text-text-dim">{{ t('yueGen.stepsTradeoff') }}</p>
+      </div>
+
       <div v-if="cot !== 'off'" class="space-y-3 rounded-lg border border-border bg-panel-2/50 p-3">
         <div>
           <label class="text-xs text-text-dim">{{ t('yueGen.abcScore') }}</label>
@@ -351,7 +361,7 @@ async function submit() {
             <input v-model="unloadSheetSage" type="checkbox" class="rounded border-border" />
             {{ t('yueGen.unloadSheetSage') }}
           </label>
-          <button type="button" class="accent-gradient rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" :disabled="!coverFile || extracting" @click="extractAbc">
+          <button type="button" class="accent-gradient rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" :disabled="!coverFile || extracting || store.isBusy" @click="extractAbc">
             {{ extracting ? t('yueGen.extracting') : t('yueGen.extract') }}
           </button>
           <p v-if="coverStatus" class="text-xs text-text-dim">{{ coverStatus }}</p>
@@ -384,7 +394,8 @@ async function submit() {
           </div>
           <div>
             <label class="text-xs text-text-dim">{{ t('aceGen.inferenceSteps') }}</label>
-            <input v-model.number="numInferenceSteps" type="number" class="w-full rounded-lg border border-border bg-panel-2 p-2 text-sm text-text" :placeholder="t('yueGen.defaultPlaceholder')" />
+            <input v-model.number="numInferenceSteps" type="number" min="1" class="w-full rounded-lg border border-border bg-panel-2 p-2 text-sm text-text" :placeholder="t('yueGen.defaultStepsPlaceholder')" />
+            <p class="mt-1 text-xs text-text-dim">{{ t('yueGen.customSteps') }}</p>
           </div>
         </div>
 

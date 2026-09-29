@@ -7,6 +7,7 @@ export interface GenerateMusicRequest {
   lyrics?: string
   sample_mode?: boolean
   sample_query?: string
+  use_cot_caption?: boolean
   model?: string
   bpm?: number
   key_scale?: string
@@ -109,9 +110,9 @@ export async function stats(): Promise<{ jobs: Record<string, number>; queue_siz
   return unwrap(raw)
 }
 
-export async function releaseTask(req: GenerateMusicRequest, refAudioFile?: File | null): Promise<ReleaseTaskResponse> {
+export async function releaseTask(req: GenerateMusicRequest, sourceAudioFile?: File | null, styleAudioFile?: File | null): Promise<ReleaseTaskResponse> {
   let raw: Envelope<ReleaseTaskResponse> | ReleaseTaskResponse
-  if (refAudioFile) {
+  if (sourceAudioFile || styleAudioFile) {
     const form = new FormData()
     for (const [key, value] of Object.entries(req)) {
       if (value === undefined || value === null) continue
@@ -119,7 +120,8 @@ export async function releaseTask(req: GenerateMusicRequest, refAudioFile?: File
     }
     // Server accepts the source/context audio under either "ctx_audio" or
     // "src_audio" multipart field names (release_task_request_parser.py).
-    form.append('ctx_audio', refAudioFile, refAudioFile.name)
+    if (sourceAudioFile) form.append('ctx_audio', sourceAudioFile, sourceAudioFile.name)
+    if (styleAudioFile) form.append('ref_audio', styleAudioFile, styleAudioFile.name)
     raw = await apiFetch<Envelope<ReleaseTaskResponse> | ReleaseTaskResponse>(`${BASE}/release_task`, {
       method: 'POST',
       body: form,

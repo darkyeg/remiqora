@@ -2,13 +2,15 @@
 import { onBeforeUnmount, onMounted, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOrchestratorStore } from './stores/orchestrator'
+import { useNotificationsStore } from './stores/notifications'
 import AppHeader from './components/shared/AppHeader.vue'
 
 const orchestrator = useOrchestratorStore()
+const notifications = useNotificationsStore()
 const { t } = useI18n()
 
 watchEffect(() => {
-  document.title = `Remiqora — ${t('header.tagline')}`
+  document.title = `${notifications.unread ? `(${notifications.unread}) ` : ''}Remiqora — ${t('header.tagline')}`
 })
 
 onMounted(() => orchestrator.startPolling())

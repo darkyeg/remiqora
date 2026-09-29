@@ -24,7 +24,7 @@ onBeforeUnmount(() => store.stopBackgroundTasks())
   <div class="space-y-6">
     <ModelOfflineBanner v-if="!isRunning" model-id="yue2" :status="modelStatus" :error="modelError" />
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-[480px_minmax(0,1fr)]">
-      <GenerateForm v-if="isRunning" />
+      <GenerateForm v-show="isRunning" />
       <TrackFeed :class="{ 'lg:col-span-2': !isRunning }" />
     </div>
   </div>

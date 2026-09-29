@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAceStepStore } from '../../stores/aceStep'
 import type { AceJob } from '../../stores/aceStep'
 import { formatDuration } from '../../composables/formatDuration'
+import { formatClock } from '../../utils/progressTime'
+import { trackMp3Url } from '../../api/tracks'
 import StatusBadge from '../../components/shared/StatusBadge.vue'
 import ProgressBar from '../../components/shared/ProgressBar.vue'
 import WaveformPlayer from '../../components/shared/WaveformPlayer.vue'
@@ -17,6 +19,22 @@ const store = useAceStepStore()
 const { t, locale } = useI18n()
 const showDetails = ref(false)
 const copied = ref(false)
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | null = null
+watch(() => props.job.status, (status) => {
+  if (status === 'queued' || status === 'running') {
+    if (!clock) clock = setInterval(() => { now.value = Date.now() }, 1000)
+  } else if (clock) {
+    clearInterval(clock)
+    clock = null
+  }
+}, { immediate: true })
+onBeforeUnmount(() => { if (clock) clearInterval(clock) })
+const elapsed = computed(() => Math.max(0, Math.floor((now.value - (props.job.startedAt || props.job.createdAt)) / 1000)))
+const remaining = computed(() => {
+  if (props.job.status !== 'running' || !props.job.startedAt || props.job.progress < 10 || props.job.progress >= 99 || elapsed.value < 10) return null
+  return Math.round(elapsed.value * (100 - props.job.progress) / props.job.progress)
+})
 
 const createdLabel = computed(() => new Date(props.job.createdAt).toLocaleString(locale.value === 'ru' ? 'ru-RU' : 'en-US'))
 // Custom-mode style tags land in params.prompt, Simple-mode ones in
@@ -39,6 +57,10 @@ function download(url: string, index: number) {
   a.href = url
   a.download = `${(props.job.title || 'track').replace(/[^\w\-]+/g, '_')}_${index + 1}.${props.job.audioFormat}`
   a.click()
+}
+function mp3Url(url: string): string | undefined {
+  const match = /^\/api\/tracks\/(\d+)\/audio$/.exec(url)
+  return match ? trackMp3Url(Number(match[1])) : undefined
 }
 function copyParamsToForm() {
   const p = props.job.params || {}
@@ -76,7 +98,11 @@ function copyParamsToForm() {
 
     <div v-if="job.status === 'queued' || job.status === 'running'" class="space-y-1">
       <ProgressBar :value="job.progress" />
-      <p class="text-xs text-text-dim">{{ job.stage || (job.status === 'queued' ? t('aceJob.queued') : t('aceJob.generating')) }}</p>
+      <p class="text-xs text-text-dim">{{ job.stage || (job.status === 'queued' ? t('aceJob.queued') : t('aceJob.generating')) }} · {{ job.progress }}%</p>
+      <p class="text-xs text-text-dim">
+        {{ t('progress.elapsed', { time: formatClock(elapsed) }) }}
+        <template v-if="remaining != null"> · {{ t('progress.remainingApprox', { time: formatClock(remaining) }) }}</template>
+      </p>
     </div>
 
     <div v-else-if="job.status === 'failed'" class="rounded-lg bg-status-failed/10 p-2 text-xs text-status-failed">{{ job.error }}</div>
@@ -89,9 +115,14 @@ function copyParamsToForm() {
 
       <div class="flex flex-wrap items-center gap-3 text-xs text-text-dim">
         <span v-if="job.durationSec">{{ formatDuration(job.durationSec) }}</span>
-        <button v-for="(url, i) in job.audioUrls" :key="'dl' + url" type="button" class="text-accent1 hover:underline" @click="download(url, i)">
-          {{ t('aceJob.download') }}{{ job.audioUrls.length > 1 ? ` #${i + 1}` : '' }}
-        </button>
+        <template v-for="(url, i) in job.audioUrls" :key="'dl' + url">
+          <a v-if="job.audioFormat !== 'mp3' && mp3Url(url)" :href="mp3Url(url)" download class="text-accent1 hover:underline">
+            {{ t('aceJob.downloadMp3') }}{{ job.audioUrls.length > 1 ? ` #${i + 1}` : '' }}
+          </a>
+          <button type="button" class="text-accent1 hover:underline" @click="download(url, i)">
+            {{ t('aceJob.download') }} {{ job.audioFormat.toUpperCase() }}{{ job.audioUrls.length > 1 ? ` #${i + 1}` : '' }}
+          </button>
+        </template>
       </div>
       <div v-for="id in job.dbIds" :key="'stems' + id" class="space-y-1.5 pt-1">
         <StemsPanel :track-id="id" :title="job.title" :lyrics="job.lyrics" model="ace_step" />

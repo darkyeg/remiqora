@@ -4,6 +4,7 @@ import type { CotMode, GenerateOptions } from '../api/yue2'
 import * as tracksApi from '../api/tracks'
 import type { JobStatus } from '../types'
 import { i18n } from '../i18n'
+import { useNotificationsStore } from './notifications'
 
 const t = i18n.global.t
 
@@ -13,6 +14,9 @@ export interface Yue2Job {
   id: string
   status: JobStatus
   createdAt: number
+  startedAt?: number
+  runStartedAt?: number
+  phase?: 'loading' | 'generating' | 'saving' | 'stopping'
   style: string
   lyrics: string
   cot: CotMode
@@ -36,6 +40,7 @@ export const useYue2Store = defineStore('yue2', {
     health: null as api.HealthResponse | null,
     healthError: false,
     historyLoaded: false,
+    resetting: false,
     // Set by a TrackCard's "insert into form" action; GenerateForm watches
     // this and copies it into its own local ABC textarea state.
     pendingAbcInsert: null as string | null,
@@ -43,7 +48,19 @@ export const useYue2Store = defineStore('yue2', {
     _aborters: {} as Record<string, AbortController>,
     _healthTimer: null as ReturnType<typeof setTimeout> | null,
   }),
+  getters: {
+    isBusy: (state) => state.resetting || state.jobs.some((job) => job.status === 'running' || job.status === 'queued'),
+  },
   actions: {
+    async resetEngine() {
+      if (this.isBusy) return
+      this.resetting = true
+      try {
+        await api.resetEngine()
+      } finally {
+        this.resetting = false
+      }
+    },
     requestInsertParams(params: Record<string, any>) {
       this.pendingParamsInsert = { ...params }
     },
@@ -99,6 +116,7 @@ export const useYue2Store = defineStore('yue2', {
       this._healthTimer = null
     },
     async generateBatch(params: { lyrics: string; style: string; cot: CotMode; precision: 'q8_0' | 'q4_0'; baseSeed: number; randomSeed: boolean; batchSize: number; options: GenerateOptions }) {
+      if (this.isBusy) return
       const newJobs: Yue2Job[] = []
       for (let i = 0; i < params.batchSize; i++) {
         const seed = params.randomSeed ? Math.floor(Math.random() * 2147483647) : params.baseSeed + i
@@ -123,20 +141,26 @@ export const useYue2Store = defineStore('yue2', {
         // original (pre-unshift) reference never triggers a re-render even
         // though the same data ends up saved to the server correctly.
         const job = this.jobs.find((j) => j.id === id)
-        if (job) await this._generateOne(job, params.options)
+        if (job?.status === 'queued') await this._generateOne(job, params.options)
       }
     },
     async _generateOne(job: Yue2Job, options: GenerateOptions) {
       job.status = 'running'
+      job.startedAt = Date.now()
+      job.phase = 'loading'
       const aborter = new AbortController()
       this._aborters[job.id] = aborter
       try {
         const started = performance.now()
-        const result = await api.generateTrack(job.lyrics, job.seed, options, job.precision, aborter.signal)
+        const result = await api.generateTrack(job.lyrics, job.seed, options, job.precision, aborter.signal, (phase) => {
+          job.phase = phase
+          if (phase === 'generating') job.runStartedAt = Date.now()
+        })
         const wallMs = result.timing?.wall_ms ?? performance.now() - started
         const durationMs = result.timing?.audio_duration_ms
         if (typeof result.audio !== 'string') throw new Error(t('storeErrors.serverNoAudio'))
         const blob = api.base64AudioBlob(result.audio)
+        delete result.audio
         const abcPlan = api.abcFromResult(result)
         job.audioUrl = URL.createObjectURL(blob)
         job.wallSec = wallMs / 1000
@@ -144,6 +168,8 @@ export const useYue2Store = defineStore('yue2', {
         job.abcPlan = abcPlan || null
         job.status = 'done'
         job.finalized = true
+        job.phase = 'saving'
+        useNotificationsStore().trackDone('yue2', job.style)
 
         try {
           const saved = await tracksApi.saveTrack(
@@ -163,10 +189,15 @@ export const useYue2Store = defineStore('yue2', {
           job.savedFilename = saved.filename
           job.saveError = null
           job.dbId = saved.id
+          const temporaryUrl = job.audioUrl
+          job.audioUrl = saved.audio_url
+          if (temporaryUrl?.startsWith('blob:')) URL.revokeObjectURL(temporaryUrl)
+          job.phase = undefined
         } catch (err) {
           job.savedFilename = null
           job.saveError = err instanceof Error ? err.message : String(err)
           job.dbId = null
+          job.phase = undefined
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -181,6 +212,13 @@ export const useYue2Store = defineStore('yue2', {
       }
     },
     cancel(jobId: string) {
+      const job = this.jobs.find((item) => item.id === jobId)
+      if (job?.status === 'queued') {
+        job.status = 'cancelled'
+        job.finalized = true
+        return
+      }
+      if (job?.phase === 'stopping') return
       this._aborters[jobId]?.abort()
     },
     requestInsertAbc(abc: string) {
@@ -197,6 +235,7 @@ export const useYue2Store = defineStore('yue2', {
           // ignore - still remove locally so the UI doesn't get stuck
         }
       }
+      if (job.audioUrl?.startsWith('blob:')) URL.revokeObjectURL(job.audioUrl)
       this.jobs = this.jobs.filter((j) => j.id !== job.id)
     },
     async renameJob(job: Yue2Job, title: string) {
